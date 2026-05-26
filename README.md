@@ -1,98 +1,280 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# 🌍 Earth DNA — Backend API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+REST API backend for the Earth DNA platform.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+**Stack:** NestJS 11 · TypeORM · PostgreSQL 17 · TypeScript 5 · JWT Auth · Swagger/OpenAPI
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 📋 Prerequisites
 
-## Project setup
+Make sure the following are installed on your machine before you start:
+
+| Tool | Version | Install |
+|---|---|---|
+| Node.js | ≥ 20 | [nodejs.org](https://nodejs.org) |
+| npm | ≥ 10 | Bundled with Node.js |
+| Docker | Latest | [docker.com](https://www.docker.com/products/docker-desktop) |
+| Docker Compose | Latest | Bundled with Docker Desktop |
+
+---
+
+## 🚀 Getting Started
+
+### 1. Clone the repository
 
 ```bash
-$ npm install
+git clone https://github.com/<your-username>/earth-dna-BE.git
+cd earth-dna-BE
 ```
 
-## Compile and run the project
+### 2. Install dependencies
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm install
 ```
 
-## Run tests
+### 3. Set up environment variables
+
+Copy the example file and fill in your values:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+cp .env.example .env
 ```
 
-## Deployment
+Open `.env` and update the values — at minimum set a strong `JWT_SECRET`:
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+```env
+# Application
+NODE_ENV=development
+PORT=3000
+API_PREFIX=api/v1
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+# Database (matches docker-compose.yml defaults)
+DB_HOST=localhost
+DB_PORT=5433
+DB_USERNAME=postgres
+DB_PASSWORD=postgres
+DB_NAME=earth_dna
+
+# TypeORM — set true only for local dev, never in production
+DB_SYNC=true
+DB_LOGGING=true
+
+# JWT
+JWT_SECRET=your-super-secret-key-change-this
+JWT_EXPIRES_IN=7d
+```
+
+> ⚠️ **Never commit your `.env` file.** It is already in `.gitignore`.
+
+---
+
+## 🐘 PostgreSQL with Docker
+
+The project uses Docker to run PostgreSQL 17 locally on **port 5433** (avoids conflicts with any locally installed Postgres on the default 5432).
+
+### Start the database
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm run db:start
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+This runs `docker compose up -d` in the background. The first run will pull the `postgres:17-alpine` image (~90 MB).
 
-## Resources
+### Verify it's running
 
-Check out a few resources that may come in handy when working with NestJS:
+```bash
+docker ps
+# You should see: earth_dna_postgres   postgres:17-alpine   Up
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### Other database commands
 
-## Support
+```bash
+npm run db:stop    # Stop the container (data is preserved)
+npm run db:reset   # ⚠️  Stop + delete all data + restart fresh
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+> **How it works:** Docker Compose mounts a named volume (`postgres_data`) so your data persists across `db:stop` / `db:start` cycles. Only `db:reset` wipes the data.
 
-## Stay in touch
+---
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+## ▶️ Running the App
 
-## License
+Make sure the database is running first (`npm run db:start`), then:
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+```bash
+# Development — watch mode (auto-restarts on file changes)
+npm run start:dev
+
+# Production build + run
+npm run build
+npm run start:prod
+```
+
+Once started you'll see:
+
+```
+🚀 Application running on: http://localhost:3000/api/v1
+📖 Swagger docs:          http://localhost:3000/docs
+```
+
+---
+
+## 📖 API Documentation (Swagger)
+
+Interactive API docs are available at:
+
+```
+http://localhost:3000/docs
+```
+
+### Authenticating in Swagger
+
+1. Use `POST /auth/register` or `POST /auth/login` to get an `accessToken`
+2. Click the **Authorize 🔒** button at the top right
+3. Paste your token (without the `Bearer ` prefix — Swagger adds it automatically)
+4. Click **Authorize** → **Close**
+5. Protected endpoints (e.g. `GET /auth/profile`) will now include the token automatically
+
+---
+
+## 🔌 API Endpoints
+
+All routes are prefixed with `/api/v1`.
+
+### Auth
+
+| Method | Route | Auth | Description |
+|---|---|---|---|
+| `POST` | `/auth/register` | Public | Create a new account |
+| `POST` | `/auth/login` | Public | Sign in, receive JWT |
+| `GET` | `/auth/profile` | 🔒 JWT | Get logged-in user details |
+
+### Request body — Register
+
+```json
+{
+  "fullName": "Jane Doe",
+  "email": "jane@example.com",
+  "password": "Password123",
+  "country": "USA",
+  "zipCode": "10001"
+}
+```
+
+> `zipCode` is optional. All other fields are required.
+
+### Request body — Login
+
+```json
+{
+  "email": "jane@example.com",
+  "password": "Password123"
+}
+```
+
+### Response envelope
+
+Every response is wrapped in a standard envelope:
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": { ... },
+  "timestamp": "2026-05-26T10:00:00.000Z"
+}
+```
+
+---
+
+## 🗄️ Database Migrations
+
+> `DB_SYNC=true` in `.env` auto-syncs the schema locally — no migrations needed for development.
+> In staging/production set `DB_SYNC=false` and use migrations.
+
+```bash
+# Generate a migration after changing an entity
+npm run migration:generate -- src/database/migrations/MigrationName
+
+# Apply all pending migrations
+npm run migration:run
+
+# Roll back the last migration
+npm run migration:revert
+
+# List all migrations and their status
+npm run migration:show
+```
+
+---
+
+## 🧪 Tests
+
+```bash
+# Unit tests
+npm run test
+
+# Unit tests in watch mode
+npm run test:watch
+
+# Test coverage report
+npm run test:cov
+
+# End-to-end tests
+npm run test:e2e
+```
+
+---
+
+## 📁 Project Structure
+
+```
+src/
+├── config/                  # App and database config (registerAs)
+├── common/
+│   ├── filters/             # Global exception filter
+│   ├── interceptors/        # Global response envelope interceptor
+│   └── decorators/          # @CurrentUser() param decorator
+├── database/
+│   ├── data-source.ts       # TypeORM CLI DataSource (migrations)
+│   └── migrations/          # Generated migration files
+├── auth/
+│   ├── dto/                 # RegisterDto, LoginDto, AuthResponseDto
+│   ├── guards/              # JwtAuthGuard
+│   ├── interfaces/          # AuthResponse type
+│   └── auth.module.ts / controller / service
+├── user/
+│   ├── dto/                 # CreateUserDto
+│   ├── entities/            # UserEntity
+│   └── user.module.ts / controller / service
+├── app.module.ts            # Root module
+└── main.ts                  # Bootstrap (Swagger, pipes, guards, filters)
+```
+
+---
+
+## 📦 Environment Variables Reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `NODE_ENV` | `development` | Environment (`development` / `production`) |
+| `PORT` | `3000` | HTTP port the app listens on |
+| `API_PREFIX` | `api/v1` | Global URL prefix for all routes |
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5433` | PostgreSQL port (5433 for Docker) |
+| `DB_USERNAME` | `postgres` | PostgreSQL username |
+| `DB_PASSWORD` | `postgres` | PostgreSQL password |
+| `DB_NAME` | `earth_dna` | PostgreSQL database name |
+| `DB_SYNC` | `false` | Auto-sync schema — `true` for dev only |
+| `DB_LOGGING` | `false` | Log SQL queries to console |
+| `JWT_SECRET` | — | **Required.** Secret key for signing JWTs |
+| `JWT_EXPIRES_IN` | `7d` | JWT expiry (`7d`, `24h`, `3600`, etc.) |
+
+---
+
+## 📜 License
+
+Private — All rights reserved.
