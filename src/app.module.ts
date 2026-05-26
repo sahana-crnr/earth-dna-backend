@@ -5,6 +5,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { appConfig, databaseConfig } from './config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
+import { AuthModule } from './auth/auth.module';
+import { UserModule } from './user/user.module';
 
 @Module({
   imports: [
@@ -23,6 +25,10 @@ import { TypeOrmModuleOptions } from '@nestjs/typeorm';
       useFactory: (config: ConfigService): TypeOrmModuleOptions =>
         config.get<TypeOrmModuleOptions>('database') as TypeOrmModuleOptions,
     }),
+
+    AuthModule,
+
+    UserModule,
   ],
   controllers: [AppController],
   providers: [AppService],

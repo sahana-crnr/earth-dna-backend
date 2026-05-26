@@ -33,3 +33,6 @@ coverage/
 
 # Misc
 *.tsbuildinfo
+
+# Claude context snapshot (regenerated daily, not committed)
+.claude/context.md

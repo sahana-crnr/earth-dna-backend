@@ -24,7 +24,8 @@
     "migration:show": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js migration:show -d src/database/data-source.ts",
     "db:start": "docker compose up -d",
     "db:stop": "docker compose down",
-    "db:reset": "docker compose down -v && docker compose up -d"
+    "db:reset": "docker compose down -v && docker compose up -d",
+    "claude:sync": "bash scripts/sync-context.sh"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
