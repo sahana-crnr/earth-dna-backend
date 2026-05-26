@@ -1,21 +1,18 @@
 # Earth DNA — Daily Context Snapshot
-> Generated: 2026-05-26 11:09:44 IST
+> Generated: 2026-05-26 11:20:17 IST
 
 ---
 
 ## Git Status
 ```
- M package.json
- M src/app.module.ts
-?? .claude/
-?? CLAUDE.md
-?? scripts/
-?? src/auth/
-?? src/user/
+ M .claude/context.md
+ M CLAUDE.md
+?? .claude/commands/
 ```
 
 ## Recent Commits (last 20)
 ```
+f13c234 feat: add Claude Code agent, CLAUDE.md, and daily sync workflow
 a2d3dcb fix: use port 5433 for Docker PostgreSQL to avoid conflict with local Homebrew Postgres
 54adf7d feat: initial NestJS + TypeORM + PostgreSQL setup
 ```
@@ -104,7 +101,7 @@ _(none yet)_
 ## Docker Services
 ```
 NAMES                STATUS                    PORTS
-earth_dna_postgres   Up 32 minutes (healthy)   0.0.0.0:5433->5432/tcp, [::]:5433->5432/tcp
+earth_dna_postgres   Up 42 minutes (healthy)   0.0.0.0:5433->5432/tcp, [::]:5433->5432/tcp
 ```
 
 ---
