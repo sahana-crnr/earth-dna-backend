@@ -1,3 +1,5 @@
+// Global exception filter. Catches every thrown exception and returns a
+// consistent JSON error response: { statusCode, timestamp, path, message }.
 import {
   ExceptionFilter,
   Catch,

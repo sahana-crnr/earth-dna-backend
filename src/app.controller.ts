@@ -1,3 +1,4 @@
+// Root controller. Handles the base GET "/" route — used as a health/hello check.
 import { Controller, Get } from '@nestjs/common';
 import { AppService } from './app.service';
 

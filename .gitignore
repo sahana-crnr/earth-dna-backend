@@ -36,3 +36,7 @@ coverage/
 
 # Claude context snapshot (regenerated daily, not committed)
 .claude/context.md
+
+# Claude project instructions (local only, not committed)
+CLAUDE.md
+

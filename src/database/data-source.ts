@@ -1,3 +1,5 @@
+// TypeORM DataSource used by the TypeORM CLI (migrations). Reads connection
+// settings directly from .env. Always has synchronize: false — migrations only.
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { config } from 'dotenv';

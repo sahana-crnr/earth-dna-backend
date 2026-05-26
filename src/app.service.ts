@@ -1,3 +1,4 @@
+// Root service. Provides the business logic for the base AppController.
 import { Injectable } from '@nestjs/common';
 
 @Injectable()

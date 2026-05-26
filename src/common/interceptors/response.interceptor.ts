@@ -1,3 +1,5 @@
+// Global response interceptor. Wraps every successful response in a standard
+// envelope: { statusCode, message, data, timestamp }.
 import {
   Injectable,
   NestInterceptor,

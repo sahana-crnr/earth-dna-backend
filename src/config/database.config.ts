@@ -1,3 +1,5 @@
+// Database config for TypeORM. Reads connection details from .env and registers
+// them under the "database" namespace for use in TypeOrmModule.forRootAsync().
 import { registerAs } from '@nestjs/config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 
