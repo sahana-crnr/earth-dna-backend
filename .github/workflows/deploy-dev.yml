@@ -76,6 +76,19 @@ jobs:
           container-name: web
           image: ${{ steps.build.outputs.image }}
 
+      - name: Remove placeholder command override
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("${{ steps.task-def.outputs.task-definition }}") as f:
+              td = json.load(f)
+          for c in td.get("containerDefinitions", []):
+              c.pop("command", None)
+              c.pop("entryPoint", None)
+          with open("${{ steps.task-def.outputs.task-definition }}", "w") as f:
+              json.dump(td, f, indent=2)
+          PY
+
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
