@@ -24,8 +24,12 @@ jobs:
       - name: Derive region code
         id: region
         run: |
-          IFS='-' read -r p0 p1 p2 <<< "${{ env.AWS_REGION }}"
-          echo "code=${p0:0:2}${p1:0:1}${p2: -1}" >> "$GITHUB_OUTPUT"
+          # Matches CDK regionCode(): us-east-1 -> ue1, eu-west-1 -> ew1
+          IFS='-' read -ra PARTS <<< "${{ env.AWS_REGION }}"
+          RC=""
+          for ((i=0; i<${#PARTS[@]}-1; i++)); do RC+="${PARTS[i]:0:1}"; done
+          RC+="${PARTS[-1]}"
+          echo "code=$RC" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
