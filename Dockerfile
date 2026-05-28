@@ -14,6 +14,9 @@ FROM node:20-alpine AS production
 
 ENV NODE_ENV=production
 
+# wget used by ECS container health check
+RUN apk add --no-cache wget
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./
