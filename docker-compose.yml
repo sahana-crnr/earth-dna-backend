@@ -1,4 +1,26 @@
 services:
+  app:
+    image: earth-dna-be:latest
+    container_name: earth_dna_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '1234:1234'
+    environment:
+      NODE_ENV: production
+      PORT: 1234
+      API_PREFIX: api/v1
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-earth_dna}
+      DB_SYNC: 'true'
+      DB_LOGGING: 'false'
+      JWT_SECRET: ${JWT_SECRET:-local-test-secret}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
+
   postgres:
     image: postgres:17-alpine
     container_name: earth_dna_postgres
@@ -12,7 +34,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_NAME:-earth_dna}']
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_NAME:-earth_dna}',
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
