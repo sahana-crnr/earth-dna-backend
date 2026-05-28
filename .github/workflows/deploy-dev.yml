@@ -45,7 +45,7 @@ jobs:
         id: build
         env:
           REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          REPO: earth-dna-be-${{ env.EARTH_DNA_ENV }}-${{ steps.region.outputs.code }}
+          REPO: earth-dna-be-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
         run: |
           IMAGE_URI="$REGISTRY/$REPO"
           docker build --platform linux/amd64 \
@@ -58,8 +58,8 @@ jobs:
 
       - name: Download current task definition
         env:
-          CLUSTER: earth-dna-cluster-${{ env.EARTH_DNA_ENV }}-${{ steps.region.outputs.code }}
-          SERVICE: earth-dna-be-service-${{ env.EARTH_DNA_ENV }}-${{ steps.region.outputs.code }}
+          CLUSTER: earth-dna-cluster-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
+          SERVICE: earth-dna-be-service-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
         run: |
           TASK_DEF=$(aws ecs describe-services \
             --cluster "$CLUSTER" --services "$SERVICE" \
@@ -80,6 +80,6 @@ jobs:
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: earth-dna-be-service-${{ env.EARTH_DNA_ENV }}-${{ steps.region.outputs.code }}
-          cluster: earth-dna-cluster-${{ env.EARTH_DNA_ENV }}-${{ steps.region.outputs.code }}
+          service: earth-dna-be-service-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
+          cluster: earth-dna-cluster-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
           wait-for-service-stability: true
