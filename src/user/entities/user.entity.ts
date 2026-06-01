@@ -28,6 +28,14 @@ export class UserEntity {
   @Column({ type: 'varchar', length: 255, select: false })
   password: string;
 
+  @Exclude()
+  @Column({ type: 'varchar', length: 64, nullable: true, select: false })
+  resetPasswordToken: string | null;
+
+  @Exclude()
+  @Column({ type: 'timestamptz', nullable: true })
+  resetPasswordExpiry: Date | null;
+
   @ApiProperty({ example: 'USA' })
   @Column({ type: 'varchar', length: 100 })
   country: string;

@@ -5,18 +5,19 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { appConfig, databaseConfig } from './config';
+import { appConfig, databaseConfig, mailConfig } from './config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
+import { MailModule } from './mail/mail.module';
 
 @Module({
   imports: [
     // ─── Config ──────────────────────────────────────────────────────────────
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: '.env',
-      load: [appConfig, databaseConfig],
+      envFilePath: [`.env.${process.env.NODE_ENV || 'local'}`, '.env'],
+      load: [appConfig, databaseConfig, mailConfig],
       cache: true,
     }),
 
@@ -27,6 +28,8 @@ import { UserModule } from './user/user.module';
       useFactory: (config: ConfigService): TypeOrmModuleOptions =>
         config.get<TypeOrmModuleOptions>('database') as TypeOrmModuleOptions,
     }),
+
+    MailModule,
 
     AuthModule,
 
