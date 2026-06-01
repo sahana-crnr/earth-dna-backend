@@ -1,0 +1,98 @@
+name: Deploy to ECS (dev2)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  EARTH_DNA_ENV: dev2
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive region code
+        id: region
+        run: |
+          # Matches CDK regionCode(): us-east-1 -> ue1, eu-west-1 -> ew1
+          IFS='-' read -ra PARTS <<< "${{ env.AWS_REGION }}"
+          RC=""
+          for ((i=0; i<${#PARTS[@]}-1; i++)); do RC+="${PARTS[i]:0:1}"; done
+          RC+="${PARTS[-1]}"
+          echo "code=$RC" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image (linux/amd64)
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          REPO: earth-dna-be-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
+        run: |
+          IMAGE_URI="$REGISTRY/$REPO"
+          docker build --platform linux/amd64 \
+            -t "$IMAGE_URI:${{ github.sha }}" \
+            -t "$IMAGE_URI:latest" \
+            .
+          docker push "$IMAGE_URI:${{ github.sha }}"
+          docker push "$IMAGE_URI:latest"
+          echo "image=$IMAGE_URI:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        env:
+          CLUSTER: earth-dna-cluster-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
+          SERVICE: earth-dna-be-service-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
+        run: |
+          TASK_DEF=$(aws ecs describe-services \
+            --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_DEF" \
+            --query 'taskDefinition' > task-definition.json
+
+      - name: Render new task definition with updated image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: web
+          image: ${{ steps.build.outputs.image }}
+
+      - name: Remove placeholder command override
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("${{ steps.task-def.outputs.task-definition }}") as f:
+              td = json.load(f)
+          for c in td.get("containerDefinitions", []):
+              c.pop("command", None)
+              c.pop("entryPoint", None)
+          with open("${{ steps.task-def.outputs.task-definition }}", "w") as f:
+              json.dump(td, f, indent=2)
+          PY
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: earth-dna-be-service-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
+          cluster: earth-dna-cluster-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
+          wait-for-service-stability: true
