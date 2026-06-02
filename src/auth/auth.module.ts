@@ -16,7 +16,9 @@ import { UserModule } from '../user/user.module';
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('app.jwtSecret'),
         // expiresIn is a branded StringValue in @nestjs/jwt — cast required
-        signOptions: { expiresIn: config.get<string>('app.jwtExpiresIn') as any },
+        signOptions: {
+          expiresIn: config.get<string>('app.jwtExpiresIn') as string,
+        },
       }),
       inject: [ConfigService],
     }),

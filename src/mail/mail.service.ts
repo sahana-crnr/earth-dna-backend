@@ -16,10 +16,14 @@ export class MailService {
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
     const fromName = this.config.get<string>('mail.fromName');
     const fromEmail = this.config.get<string>('mail.fromEmail');
-    const expiryMinutes = this.config.get<number>('mail.resetTokenExpiryMinutes')!;
+    const expiryMinutes = this.config.get<number>(
+      'mail.resetTokenExpiryMinutes',
+    )!;
 
     if (this.config.get<boolean>('mail.dryRun')) {
-      this.logger.log(`[MAIL DRY RUN] Password reset link for ${to}: ${resetUrl}`);
+      this.logger.log(
+        `[MAIL DRY RUN] Password reset link for ${to}: ${resetUrl}`,
+      );
       return;
     }
 
