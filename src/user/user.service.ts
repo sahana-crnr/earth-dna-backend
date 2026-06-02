@@ -51,6 +51,15 @@ export class UserService {
       .then(() => undefined);
   }
 
+  clearResetToken(userId: string): Promise<void> {
+    return this.userRepo
+      .update(userId, {
+        resetPasswordToken: null,
+        resetPasswordExpiry: null,
+      })
+      .then(() => undefined);
+  }
+
   findByResetToken(hashedToken: string): Promise<UserEntity | null> {
     return this.userRepo.findOne({
       where: {

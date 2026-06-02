@@ -16,10 +16,15 @@ export class MailService {
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
     const fromName = this.config.get<string>('mail.fromName');
     const fromEmail = this.config.get<string>('mail.fromEmail');
+    const expiryMinutes = this.config.get<number>('mail.resetTokenExpiryMinutes')!;
 
     if (this.config.get<boolean>('mail.dryRun')) {
       this.logger.log(`[MAIL DRY RUN] Password reset link for ${to}: ${resetUrl}`);
       return;
+    }
+
+    if (!fromEmail) {
+      throw new Error('AWS_SES_FROM_EMAIL is not configured');
     }
 
     await this.sesClient.send(
@@ -31,11 +36,11 @@ export class MailService {
           Body: {
             Html: {
               Charset: 'UTF-8',
-              Data: this.buildResetEmailHtml(resetUrl),
+              Data: this.buildResetEmailHtml(resetUrl, expiryMinutes),
             },
             Text: {
               Charset: 'UTF-8',
-              Data: `Reset your password by visiting: ${resetUrl}\n\nThis link expires in 15 minutes.`,
+              Data: `Reset your password by visiting: ${resetUrl}\n\nThis link expires in ${expiryMinutes} minutes.`,
             },
           },
         },
@@ -43,13 +48,13 @@ export class MailService {
     );
   }
 
-  private buildResetEmailHtml(resetUrl: string): string {
+  private buildResetEmailHtml(resetUrl: string, expiryMinutes: number): string {
     return `
 <!DOCTYPE html>
 <html>
   <body style="font-family: sans-serif; color: #333; max-width: 480px; margin: 0 auto; padding: 24px;">
     <h2>Reset your password</h2>
-    <p>Click the button below to reset your Earth DNA password. This link expires in <strong>15 minutes</strong>.</p>
+    <p>Click the button below to reset your Earth DNA password. This link expires in <strong>${expiryMinutes} minutes</strong>.</p>
     <a href="${resetUrl}"
        style="display:inline-block;padding:12px 24px;background:#16a34a;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">
       Reset Password

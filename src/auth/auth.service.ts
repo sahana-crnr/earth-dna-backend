@@ -7,6 +7,7 @@ import {
   ConflictException,
   UnauthorizedException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -23,6 +24,8 @@ const BCRYPT_SALT_ROUNDS = 10;
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
@@ -83,8 +86,7 @@ export class AuthService {
     const user = await this.userService.findByEmail(email);
 
     // Always return the same message to prevent user enumeration
-    const message =
-      'If that email is registered, a reset link has been sent.';
+    const message = 'If that email is registered, a reset link has been sent.';
 
     if (!user) return { message };
 
@@ -101,10 +103,20 @@ export class AuthService {
 
     await this.userService.setResetToken(user.id, hashedToken, expiry);
 
-    const appUrl = this.config.get<string>('mail.appUrl');
-    const resetUrl = `${appUrl}/reset-password?token=${rawToken}`;
+    const backendUrl = this.config.get<string>('mail.backendUrl');
+    const apiPrefix = this.config.get<string>('app.apiPrefix');
+    const resetUrl = `${backendUrl}/${apiPrefix}/auth/reset-password?token=${rawToken}`;
 
-    await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
+    try {
+      await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
+    } catch (err) {
+      await this.userService.clearResetToken(user.id);
+      this.logger.error(
+        `Failed to send password reset email to ${user.email}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      // Same response as success to avoid leaking whether the account exists or mail failed.
+    }
 
     return { message };
   }
@@ -112,11 +124,13 @@ export class AuthService {
   async resetPassword(
     token: string,
     newPassword: string,
+    confirmPassword: string,
   ): Promise<{ message: string }> {
-    const hashedToken = crypto
-      .createHash('sha256')
-      .update(token)
-      .digest('hex');
+    if (newPassword !== confirmPassword) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
     const user = await this.userService.findByResetToken(hashedToken);
     if (!user) {

@@ -2,7 +2,11 @@
 // prefix, CORS, validation pipe, serialization interceptor, exception filter,
 // and Swagger documentation at /docs.
 import { NestFactory, Reflector } from '@nestjs/core';
-import { ValidationPipe, ClassSerializerInterceptor, Logger } from '@nestjs/common';
+import {
+  ValidationPipe,
+  ClassSerializerInterceptor,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
@@ -24,7 +28,6 @@ async function bootstrap() {
 
   // ─── CORS ──────────────────────────────────────────────────────────────────
   app.enableCors({
-    origin: nodeEnv === 'production' ? false : '*',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
@@ -32,9 +35,9 @@ async function bootstrap() {
   // ─── Validation ────────────────────────────────────────────────────────────
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true,           // strip unknown properties
+      whitelist: true, // strip unknown properties
       forbidNonWhitelisted: true, // throw on unknown properties
-      transform: true,           // auto-transform payloads to DTO types
+      transform: true, // auto-transform payloads to DTO types
       transformOptions: {
         enableImplicitConversion: true,
       },
@@ -60,9 +63,10 @@ async function bootstrap() {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'JWT',
-        description: 'Enter your JWT access token (from /auth/login or /auth/register)',
+        description:
+          'Enter your JWT access token (from /auth/login or /auth/register)',
       },
-      'access-token',   // ← named reference — must match @ApiBearerAuth('access-token')
+      'access-token', // ← named reference — must match @ApiBearerAuth('access-token')
     )
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
@@ -71,7 +75,9 @@ async function bootstrap() {
   await app.listen(port);
 
   const logger = new Logger('Bootstrap');
-  logger.log(`🚀 Application running on: http://localhost:${port}/${apiPrefix}`);
+  logger.log(
+    `🚀 Application running on: http://localhost:${port}/${apiPrefix}`,
+  );
   logger.log(`📖 Swagger docs:          http://localhost:${port}/docs`);
   logger.log(`📦 Environment: ${nodeEnv}`);
 }

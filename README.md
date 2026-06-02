@@ -150,6 +150,8 @@ All routes are prefixed with `/api/v1`.
 |---|---|---|---|
 | `POST` | `/auth/register` | Public | Create a new account |
 | `POST` | `/auth/login` | Public | Sign in, receive JWT |
+| `POST` | `/auth/forgot-password` | Public | Request password reset email (rate-limited) |
+| `POST` | `/auth/reset-password` | Public | Set new password using email token |
 | `GET` | `/auth/profile` | 🔒 JWT | Get logged-in user details |
 
 ### Request body — Register
@@ -174,6 +176,15 @@ All routes are prefixed with `/api/v1`.
   "password": "Password123"
 }
 ```
+
+### Password reset (AWS SES)
+
+1. Set `FRONTEND_URL` to your web app (not the API URL).
+2. Set `MAIL_DRY_RUN=false` and configure `AWS_SES_FROM_EMAIL`, `AWS_REGION`, and AWS credentials.
+3. In **SES sandbox**, verify both sender and recipient emails (same address is fine for testing).
+4. Run `npm run verify:ses` (requires [AWS CLI](https://aws.amazon.com/cli/)) or follow [docs/AWS_SES_SETUP.md](docs/AWS_SES_SETUP.md).
+
+Email link format: `{FRONTEND_URL}/reset-password?token=...` — your frontend should POST the token and new password to `/auth/reset-password`.
 
 ### Response envelope
 
