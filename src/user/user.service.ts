@@ -2,7 +2,7 @@
 // finding by email, finding by id, finding with password for auth, and creating records.
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThan, Repository } from 'typeorm';
 import { UserEntity } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 
@@ -36,5 +36,44 @@ export class UserService {
   create(dto: CreateUserDto): Promise<UserEntity> {
     const user = this.userRepo.create(dto);
     return this.userRepo.save(user);
+  }
+
+  setResetToken(
+    userId: string,
+    hashedToken: string,
+    expiry: Date,
+  ): Promise<void> {
+    return this.userRepo
+      .update(userId, {
+        resetPasswordToken: hashedToken,
+        resetPasswordExpiry: expiry,
+      })
+      .then(() => undefined);
+  }
+
+  clearResetToken(userId: string): Promise<void> {
+    return this.userRepo
+      .update(userId, {
+        resetPasswordToken: null,
+        resetPasswordExpiry: null,
+      })
+      .then(() => undefined);
+  }
+
+  findByResetToken(hashedToken: string): Promise<UserEntity | null> {
+    return this.userRepo.findOne({
+      where: {
+        resetPasswordToken: hashedToken,
+        resetPasswordExpiry: MoreThan(new Date()),
+      },
+    });
+  }
+
+  async updatePassword(userId: string, hashedPassword: string): Promise<void> {
+    await this.userRepo.update(userId, {
+      password: hashedPassword,
+      resetPasswordToken: null,
+      resetPasswordExpiry: null,
+    });
   }
 }
