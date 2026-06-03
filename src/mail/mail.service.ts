@@ -23,7 +23,7 @@ export class MailService {
 
     if (isDryRun) {
       this.logger.log(
-        `[MAIL DRY RUN] Password reset link for ${to}: ${resetUrl}`,
+        `[MAIL DRY RUN] Password reset  link for ${to}: ${resetUrl}`,
       );
       return;
     }
