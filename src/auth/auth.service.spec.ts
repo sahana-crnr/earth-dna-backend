@@ -141,7 +141,11 @@ describe('AuthService', () => {
 
       userService.findByResetToken.mockResolvedValue(mockUser);
 
-      const result = await service.resetPassword(rawToken, 'newPassword1');
+      const result = await service.resetPassword(
+        rawToken,
+        'newPassword1',
+        'newPassword1',
+      );
 
       expect(result.message).toBe('Password updated successfully.');
       expect(userService.findByResetToken).toHaveBeenCalledWith(hashedToken);
@@ -158,7 +162,7 @@ describe('AuthService', () => {
       userService.findByResetToken.mockResolvedValue(null);
 
       await expect(
-        service.resetPassword('invalid-token', 'newPassword1'),
+        service.resetPassword('invalid-token', 'newPassword1', 'newPassword1'),
       ).rejects.toThrow(BadRequestException);
     });
   });
