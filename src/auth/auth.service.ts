@@ -85,10 +85,11 @@ export class AuthService {
   async forgotPassword(email: string): Promise<{ message: string }> {
     const user = await this.userService.findByEmail(email);
 
-    // Always return the same message to prevent user enumeration
-    const message = 'If that email is registered, a reset link has been sent.';
+    if (!user) {
+      throw new BadRequestException('Email not found');
+    }
 
-    if (!user) return { message };
+    const message = 'Password reset link has been sent to your email.';
 
     const rawToken = crypto.randomBytes(32).toString('hex');
     const hashedToken = crypto
