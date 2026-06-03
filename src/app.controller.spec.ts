@@ -16,8 +16,8 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should return "Welcome to the Earth DNA API!"', () => {
+      expect(appController.getStarted()).toBe('Welcome to the Earth DNA API!');
     });
   });
 });
