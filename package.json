@@ -28,7 +28,8 @@
     "db:stop": "docker compose down",
     "db:reset": "docker compose down -v && docker compose up -d",
     "claude:sync": "bash scripts/sync-context.sh",
-    "prepare": "husky"
+    "prepare": "node -e \"if (process.env.NODE_ENV !== 'production') require('child_process').execSync('husky', {stdio: 'inherit'})\""
+    
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.1055.0",
