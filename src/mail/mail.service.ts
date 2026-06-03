@@ -14,13 +14,14 @@ export class MailService {
   }
 
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
-    const fromName = this.config.get<string>('mail.fromName');
+    const fromName = this.config.get<string>('mail.fromName') || 'Earth DNA';
     const fromEmail = this.config.get<string>('mail.fromEmail');
-    const expiryMinutes = this.config.get<number>(
-      'mail.resetTokenExpiryMinutes',
-    )!;
+    const expiryMinutes =
+      this.config.get<number>('mail.resetTokenExpiryMinutes') ?? 15;
 
-    if (this.config.get<boolean>('mail.dryRun')) {
+    const isDryRun = this.parseBooleanConfig('mail.dryRun');
+
+    if (isDryRun) {
       this.logger.log(
         `[MAIL DRY RUN] Password reset link for ${to}: ${resetUrl}`,
       );
@@ -31,25 +32,37 @@ export class MailService {
       throw new Error('AWS_SES_FROM_EMAIL is not configured');
     }
 
-    await this.sesClient.send(
-      new SendEmailCommand({
-        Source: `${fromName} <${fromEmail}>`,
-        Destination: { ToAddresses: [to] },
-        Message: {
-          Subject: { Data: 'Reset your Earth DNA password', Charset: 'UTF-8' },
-          Body: {
-            Html: {
+    try {
+      await this.sesClient.send(
+        new SendEmailCommand({
+          Source: `${fromName} <${fromEmail}>`,
+          Destination: { ToAddresses: [to] },
+          Message: {
+            Subject: {
+              Data: 'Reset your Earth DNA password',
               Charset: 'UTF-8',
-              Data: this.buildResetEmailHtml(resetUrl, expiryMinutes),
             },
-            Text: {
-              Charset: 'UTF-8',
-              Data: `Reset your password by visiting: ${resetUrl}\n\nThis link expires in ${expiryMinutes} minutes.`,
+            Body: {
+              Html: {
+                Charset: 'UTF-8',
+                Data: this.buildResetEmailHtml(resetUrl, expiryMinutes),
+              },
+              Text: {
+                Charset: 'UTF-8',
+                Data: `Reset your password by visiting: ${resetUrl}\n\nThis link expires in ${expiryMinutes} minutes.`,
+              },
             },
           },
-        },
-      }),
-    );
+        }),
+      );
+      this.logger.log(`Password reset email sent to ${to}`);
+    } catch (error) {
+      this.logger.error(
+        `Failed to send password reset email to ${to}`,
+        error as Error,
+      );
+      throw error;
+    }
   }
 
   private buildResetEmailHtml(resetUrl: string, expiryMinutes: number): string {
@@ -68,5 +81,16 @@ export class MailService {
     </p>
   </body>
 </html>`;
+  }
+
+  private parseBooleanConfig(configKey: string): boolean {
+    const value = this.config.get<unknown>(configKey);
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase());
+    }
+    return false;
   }
 }
