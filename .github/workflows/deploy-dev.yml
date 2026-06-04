@@ -75,8 +75,8 @@ jobs:
           task-definition: task-definition.json
           container-name: web
           image: ${{ steps.build.outputs.image }}
-          environment-variables: | # 👈 added
-            BACKEND_URL=${{ vars.BACKEND_URL }}             # 👈 added
+          environment-variables: |
+            BACKEND_URL=${{ vars.BACKEND_URL }}             
 
       - name: Remove placeholder command override
         run: |
