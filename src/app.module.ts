@@ -1,9 +1,10 @@
 // Root module of the application. Wires together config, database, and all
 // feature modules (AuthModule, UserModule).
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { appConfig, databaseConfig, mailConfig } from './config';
@@ -22,19 +23,17 @@ import { MailModule } from './mail/mail.module';
       cache: true,
     }),
 
+    // Baseline rate limit applied to every route by the global ThrottlerGuard
+    // below. Routes needing something stricter override it with @Throttle() —
+    // e.g. /auth/forgot-password is pinned to 3 requests per 60s to prevent
+    // email enumeration and brute-force attempts.
+    // Note: the default storage is in-memory, so limits are per container.
     ThrottlerModule.forRoot([
       {
-        ttl: parseInt(
-          process.env.FORGOT_PASSWORD_THROTTLE_TTL_MS ?? '60000',
-          10,
-        ),
-        limit: parseInt(process.env.FORGOT_PASSWORD_THROTTLE_LIMIT ?? '3', 10),
+        ttl: parseInt(process.env.THROTTLE_TTL_MS ?? '60000', 10),
+        limit: parseInt(process.env.THROTTLE_LIMIT ?? '100', 10),
       },
     ]),
-
-    // Throttling prevents brute-force attacks on password-reset endpoints.
-    // Max 3 forgot-password requests per 60 seconds per IP to prevent email enumeration.
-    // Applied via @Throttle() decorator on /auth/forgot-password route.
 
     // ─── Database ─────────────────────────────────────────────────────────────
     TypeOrmModule.forRootAsync({
@@ -51,6 +50,14 @@ import { MailModule } from './mail/mail.module';
     UserModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // Enforces ThrottlerModule limits on every route. Without this the
+    // @Throttle() decorators have no effect.
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

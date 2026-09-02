@@ -8,6 +8,7 @@ import {
   Body,
   Query,
   Res,
+  Headers,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -25,6 +26,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -225,8 +227,11 @@ export class AuthController {
   })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 409, description: 'Email already exists' })
-  register(@Body() dto: RegisterDto): Promise<AuthResponseDto> {
-    return this.authService.register(dto);
+  register(
+    @Body() dto: RegisterDto,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AuthResponseDto> {
+    return this.authService.register(dto, userAgent);
   }
 
   @Post('login')
@@ -239,8 +244,54 @@ export class AuthController {
   })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Invalid email or password' })
-  login(@Body() dto: LoginDto): Promise<AuthResponseDto> {
-    return this.authService.login(dto);
+  login(
+    @Body() dto: LoginDto,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AuthResponseDto> {
+    return this.authService.login(dto, userAgent);
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Exchange a refresh token for new tokens' })
+  @ApiResponse({
+    status: 200,
+    description: 'New access and refresh tokens issued',
+    type: AuthResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid, expired, or reused refresh token',
+  })
+  refresh(
+    @Body() dto: RefreshTokenDto,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AuthResponseDto> {
+    return this.authService.refresh(dto.refreshToken, userAgent);
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke a single session (refresh token)' })
+  @ApiResponse({ status: 200, description: 'Logged out successfully' })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  logout(@Body() dto: RefreshTokenDto): Promise<{ message: string }> {
+    return this.authService.logout(dto.refreshToken);
+  }
+
+  @Post('logout-all')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Revoke all sessions for the current user' })
+  @ApiResponse({
+    status: 200,
+    description: 'Logged out of all sessions successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Missing or invalid token' })
+  logoutAll(@CurrentUser('sub') userId: string): Promise<{ message: string }> {
+    return this.authService.logoutAll(userId);
   }
 
   @Get('profile')
