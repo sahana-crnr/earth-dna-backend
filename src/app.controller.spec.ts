@@ -1,4 +1,4 @@
-// Unit tests for AppController. Verifies the root GET "/" route returns "Hello World!".
+// Unit tests for AppController - the root GET "/" health/hello route.
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -16,8 +16,8 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('returns the welcome string', () => {
+      expect(appController.getStarted()).toBe('Welcome to the Earth DNA API!');
     });
   });
 });

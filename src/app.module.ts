@@ -2,11 +2,12 @@
 // feature modules (AuthModule, UserModule).
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { appConfig, databaseConfig, mailConfig } from './config';
+import { appConfig, databaseConfig, mailConfig, googleConfig } from './config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
@@ -18,23 +19,26 @@ import { MailModule } from './mail/mail.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [`.env.${process.env.NODE_ENV || 'local'}`, '.env'],
-      load: [appConfig, databaseConfig, mailConfig],
+      load: [appConfig, databaseConfig, mailConfig, googleConfig],
       cache: true,
     }),
 
+    // forRoot sets the GLOBAL default for every route, not a per-route rule.
+    // It used to read FORGOT_PASSWORD_THROTTLE_* and default to 3, which made it
+    // look route-specific; combined with ThrottlerGuard never being registered,
+    // that meant NO rate limiting happened anywhere. Registering the guard while
+    // leaving the default at 3 would have capped the entire API at 3 req/min.
+    //
+    // So: a generous global default here, and strict per-route limits declared
+    // with @Throttle() on the routes that need them (see auth.controller.ts).
+    // The name 'default' is required for @Throttle({ default: ... }) to resolve.
     ThrottlerModule.forRoot([
       {
-        ttl: parseInt(
-          process.env.FORGOT_PASSWORD_THROTTLE_TTL_MS ?? '60000',
-          10,
-        ),
-        limit: parseInt(process.env.FORGOT_PASSWORD_THROTTLE_LIMIT ?? '3', 10),
+        name: 'default',
+        ttl: parseInt(process.env.THROTTLE_TTL_MS ?? '60000', 10),
+        limit: parseInt(process.env.THROTTLE_LIMIT ?? '100', 10),
       },
     ]),
-
-    // Throttling prevents brute-force attacks on password-reset endpoints.
-    // Max 3 forgot-password requests per 60 seconds per IP to prevent email enumeration.
-    // Applied via @Throttle() decorator on /auth/forgot-password route.
 
     // ─── Database ─────────────────────────────────────────────────────────────
     TypeOrmModule.forRootAsync({
@@ -51,6 +55,11 @@ import { MailModule } from './mail/mail.module';
     UserModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // Without this, every @Throttle() decorator in the app is inert metadata and
+    // no rate limiting occurs at all.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
 export class AppModule {}

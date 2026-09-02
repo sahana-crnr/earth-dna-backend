@@ -1,13 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { AuthService } from './auth.service';
 import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
 import { UserEntity } from '../user/entities/user.entity';
+import { GoogleTokenVerifier } from './google/google-token-verifier';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -22,9 +23,12 @@ describe('AuthService', () => {
       | 'clearResetToken'
       | 'findByResetToken'
       | 'updatePassword'
+      | 'createGoogleUser'
     >
   >;
   let mailService: jest.Mocked<Pick<MailService, 'sendPasswordResetEmail'>>;
+  let googleVerifier: jest.Mocked<Pick<GoogleTokenVerifier, 'verify'>>;
+  let jwtService: jest.Mocked<Pick<JwtService, 'sign'>>;
 
   const mockUser: UserEntity = {
     id: 'user-uuid',
@@ -34,7 +38,9 @@ describe('AuthService', () => {
     resetPasswordToken: null,
     resetPasswordExpiry: null,
     country: 'USA',
+    countryCode: null,
     zipCode: null,
+    authProvider: 'local',
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -49,6 +55,15 @@ describe('AuthService', () => {
       clearResetToken: jest.fn().mockResolvedValue(undefined),
       findByResetToken: jest.fn(),
       updatePassword: jest.fn().mockResolvedValue(undefined),
+      createGoogleUser: jest.fn(),
+    };
+
+    googleVerifier = {
+      verify: jest.fn().mockResolvedValue({
+        email: 'jane@example.com',
+        fullName: 'Jane Doe',
+        emailVerified: true,
+      }),
     };
 
     mailService = {
@@ -71,12 +86,20 @@ describe('AuthService', () => {
           useValue: { sign: jest.fn().mockReturnValue('jwt-token') },
         },
         {
+          provide: GoogleTokenVerifier,
+          useValue: googleVerifier,
+        },
+        {
           provide: ConfigService,
           useValue: {
             get: jest.fn((key: string) => {
               const map: Record<string, unknown> = {
                 'mail.resetTokenExpiryMinutes': 15,
-                'mail.frontendUrl': 'http://localhost:3000',
+                // The reset flow serves its HTML form from the BACKEND, so the
+                // service reads mail.backendUrl + app.apiPrefix. The old mock
+                // supplied mail.frontendUrl, which the service never reads.
+                'mail.backendUrl': 'http://localhost:1234',
+                'app.apiPrefix': 'api/v1',
               };
               return map[key];
             }),
@@ -86,6 +109,7 @@ describe('AuthService', () => {
     }).compile();
 
     service = module.get<AuthService>(AuthService);
+    jwtService = module.get(JwtService);
   });
 
   describe('forgotPassword', () => {
@@ -113,7 +137,7 @@ describe('AuthService', () => {
       expect(mailService.sendPasswordResetEmail).toHaveBeenCalledWith(
         mockUser.email,
         expect.stringMatching(
-          /^http:\/\/localhost:3000\/reset-password\?token=[a-f0-9]{64}$/,
+          /^http:\/\/localhost:1234\/api\/v1\/auth\/reset-password\?token=[a-f0-9]{64}$/,
         ),
       );
     });
@@ -141,7 +165,11 @@ describe('AuthService', () => {
 
       userService.findByResetToken.mockResolvedValue(mockUser);
 
-      const result = await service.resetPassword(rawToken, 'newPassword1');
+      const result = await service.resetPassword(
+        rawToken,
+        'newPassword1',
+        'newPassword1',
+      );
 
       expect(result.message).toBe('Password updated successfully.');
       expect(userService.findByResetToken).toHaveBeenCalledWith(hashedToken);
@@ -160,6 +188,99 @@ describe('AuthService', () => {
       await expect(
         service.resetPassword('invalid-token', 'newPassword1'),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ── Phase 2: the regression guard the migration made necessary ─────────────
+  describe('login - null-password guard', () => {
+    it('2.2 returns 401 (NOT 500) for a Google account with no password', async () => {
+      // Before this guard, bcrypt.compare(pw, null) threw
+      // "data and hash arguments required" and surfaced as a 500.
+      userService.findByEmailWithPassword.mockResolvedValue({
+        ...mockUser,
+        password: null,
+        authProvider: 'google',
+      });
+
+      await expect(
+        service.login({ email: mockUser.email, password: 'anything' }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('keeps the message generic so Google accounts cannot be enumerated', async () => {
+      userService.findByEmailWithPassword.mockResolvedValue({
+        ...mockUser,
+        password: null,
+        authProvider: 'google',
+      });
+
+      await expect(
+        service.login({ email: mockUser.email, password: 'anything' }),
+      ).rejects.toThrow('Invalid email or password');
+    });
+  });
+
+  // ── Phase 5: the Google sign-in flow ───────────────────────────────────────
+  describe('googleLogin', () => {
+    it('6.2 signs in an existing user without creating a duplicate', async () => {
+      userService.findByEmail.mockResolvedValue(mockUser);
+
+      const result = await service.googleLogin({ idToken: 'good' });
+
+      expect(result.user).toEqual(mockUser);
+      expect(result.accessToken).toBe('jwt-token');
+      expect(userService.createGoogleUser).not.toHaveBeenCalled();
+    });
+
+    it('6.1 creates a new user when none exists', async () => {
+      const created = {
+        ...mockUser,
+        password: null,
+        country: null,
+        authProvider: 'google' as const,
+      };
+      userService.findByEmail.mockResolvedValue(null);
+      userService.createGoogleUser.mockResolvedValue(created);
+
+      const result = await service.googleLogin({ idToken: 'good' });
+
+      expect(userService.createGoogleUser).toHaveBeenCalledWith({
+        email: 'jane@example.com',
+        fullName: 'Jane Doe',
+      });
+      expect(result.user).toEqual(created);
+    });
+
+    it('links a Google sign-in onto an existing password account by email', async () => {
+      userService.findByEmail.mockResolvedValue(mockUser);
+
+      const result = await service.googleLogin({ idToken: 'good' });
+
+      // Safe only because the verifier refuses unverified emails.
+      expect(result.user.id).toBe(mockUser.id);
+      expect(userService.createGoogleUser).not.toHaveBeenCalled();
+    });
+
+    it('propagates verifier rejection and never touches the database', async () => {
+      googleVerifier.verify.mockRejectedValue(
+        new UnauthorizedException('Invalid Google token'),
+      );
+
+      await expect(service.googleLogin({ idToken: 'bad' })).rejects.toThrow(
+        'Invalid Google token',
+      );
+      expect(userService.findByEmail).not.toHaveBeenCalled();
+      expect(userService.createGoogleUser).not.toHaveBeenCalled();
+    });
+
+    it('signs the same JWT payload as the password login flow', async () => {
+      userService.findByEmail.mockResolvedValue(mockUser);
+      await service.googleLogin({ idToken: 'good' });
+
+      expect(jwtService.sign).toHaveBeenCalledWith({
+        sub: mockUser.id,
+        email: mockUser.email,
+      });
     });
   });
 });

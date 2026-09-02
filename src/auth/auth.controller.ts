@@ -23,6 +23,7 @@ import type { Response } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { GoogleLoginDto } from './dto/google-login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
@@ -230,6 +231,9 @@ export class AuthController {
   }
 
   @Post('login')
+  // Brute-force protection (SECURITY-12). Until ThrottlerGuard was registered in
+  // app.module.ts this route had no limit at all, and neither did any other.
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Sign in with email and password' })
   @ApiResponse({
@@ -241,6 +245,32 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid email or password' })
   login(@Body() dto: LoginDto): Promise<AuthResponseDto> {
     return this.authService.login(dto);
+  }
+
+  @Post('google')
+  // Looser than /login: no secret is being guessed here, and mobile clients
+  // legitimately retry on flaky networks.
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sign in with a Google ID token' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Sign-in successful. Identical response shape to POST /auth/login.',
+    type: AuthResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'idToken missing or malformed body',
+  })
+  @ApiResponse({
+    status: 401,
+    description:
+      'Invalid, expired, or wrong-audience token; or the Google email is unverified',
+  })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
+  googleLogin(@Body() dto: GoogleLoginDto): Promise<AuthResponseDto> {
+    return this.authService.googleLogin(dto);
   }
 
   @Get('profile')

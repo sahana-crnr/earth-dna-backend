@@ -17,6 +17,8 @@ import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { GoogleLoginDto } from './dto/google-login.dto';
+import { GoogleTokenVerifier } from './google/google-token-verifier';
 import { UserEntity } from '../user/entities/user.entity';
 import { AuthResponse } from './interfaces/auth-response.interface';
 
@@ -31,6 +33,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
     private readonly config: ConfigService,
+    private readonly googleVerifier: GoogleTokenVerifier,
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthResponse> {
@@ -62,6 +65,14 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    // Google-created accounts have no password. bcrypt.compare() throws
+    // "data and hash arguments required" on a null hash, which would surface as a
+    // 500 on a completely ordinary user action. The message stays generic so this
+    // does not become a way to discover which addresses are Google accounts.
+    if (!user.password) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid email or password');
@@ -74,6 +85,40 @@ export class AuthService {
 
     // Remove password from the returned user object
     delete (user as Partial<typeof user>).password;
+
+    return { accessToken, user };
+  }
+
+  /**
+   * Signs a user in with a Google ID token.
+   *
+   * Returns exactly the same shape as login(): the mobile app treats both
+   * responses identically, with no special-casing.
+   *
+   * Accounts are linked by verified email - if someone registered with a password
+   * and later signs in with Google using the same address, they land in their
+   * existing account. That is safe only because GoogleTokenVerifier refuses any
+   * token whose email is not verified by Google.
+   */
+  async googleLogin(dto: GoogleLoginDto): Promise<AuthResponse> {
+    const identity = await this.googleVerifier.verify(dto.idToken);
+
+    const existing = await this.userService.findByEmail(identity.email);
+    const user =
+      existing ??
+      (await this.userService.createGoogleUser({
+        email: identity.email,
+        fullName: identity.fullName,
+      }));
+
+    if (!existing) {
+      this.logger.log(`Created account from Google sign-in: ${user.email}`);
+    }
+
+    const accessToken = this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+    });
 
     return { accessToken, user };
   }

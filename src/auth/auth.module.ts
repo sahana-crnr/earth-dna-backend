@@ -6,6 +6,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { GoogleTokenVerifier } from './google/google-token-verifier';
 import { UserModule } from '../user/user.module';
 
 @Module({
@@ -16,12 +17,14 @@ import { UserModule } from '../user/user.module';
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('app.jwtSecret'),
         // expiresIn is a branded StringValue in @nestjs/jwt — cast required
-        signOptions: { expiresIn: config.get<string>('app.jwtExpiresIn') as any },
+        signOptions: {
+          expiresIn: config.get<string>('app.jwtExpiresIn') as any,
+        },
       }),
       inject: [ConfigService],
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard],
+  providers: [AuthService, JwtAuthGuard, GoogleTokenVerifier],
 })
 export class AuthModule {}
