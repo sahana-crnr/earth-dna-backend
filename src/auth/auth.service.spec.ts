@@ -186,7 +186,7 @@ describe('AuthService', () => {
       userService.findByResetToken.mockResolvedValue(null);
 
       await expect(
-        service.resetPassword('invalid-token', 'newPassword1'),
+        service.resetPassword('invalid-token', 'newPassword1', 'newPassword1'),
       ).rejects.toThrow(BadRequestException);
     });
   });

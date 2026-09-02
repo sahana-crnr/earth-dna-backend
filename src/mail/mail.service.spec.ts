@@ -1,18 +1,20 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { MailService } from './mail.service';
-import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import { SendEmailCommand } from '@aws-sdk/client-ses';
 
 jest.mock('@aws-sdk/client-ses', () => {
   const send = jest.fn().mockResolvedValue({});
   return {
     SESClient: jest.fn().mockImplementation(() => ({ send })),
-    SendEmailCommand: jest.fn().mockImplementation((input) => input),
+    SendEmailCommand: jest.fn().mockImplementation((input: unknown) => input),
     __mockSend: send,
   };
 });
 
-const { __mockSend: mockSesSend } = jest.requireMock('@aws-sdk/client-ses');
+const { __mockSend: mockSesSend } = jest.requireMock<{ __mockSend: jest.Mock }>(
+  '@aws-sdk/client-ses',
+);
 
 describe('MailService', () => {
   let service: MailService;
@@ -82,9 +84,13 @@ describe('MailService', () => {
     expect(SendEmailCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         Destination: { ToAddresses: ['user@example.com'] },
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         Message: expect.objectContaining({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           Body: expect.objectContaining({
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
             Text: expect.objectContaining({
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
               Data: expect.stringContaining('expires in 30 minutes'),
             }),
           }),
