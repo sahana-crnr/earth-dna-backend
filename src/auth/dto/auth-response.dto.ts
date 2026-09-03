@@ -8,6 +8,12 @@ export class AuthResponseDto {
   @ApiProperty({ example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' })
   accessToken: string;
 
+  @ApiProperty({
+    example: '3f9a...c2b1',
+    description: 'Opaque refresh token; send to POST /auth/refresh to renew',
+  })
+  refreshToken: string;
+
   @ApiProperty({ type: () => UserEntity })
   user: UserEntity;
 }

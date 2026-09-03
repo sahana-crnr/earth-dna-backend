@@ -15,6 +15,7 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
+import { RefreshTokenService } from './refresh-token.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
@@ -32,11 +33,30 @@ export class AuthService {
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
+    private readonly refreshTokenService: RefreshTokenService,
     private readonly config: ConfigService,
     private readonly googleVerifier: GoogleTokenVerifier,
   ) {}
 
-  async register(dto: RegisterDto): Promise<AuthResponse> {
+  // Signs a short-lived access JWT and issues a rotating refresh token.
+  // Used by register, login, and refresh so token issuance stays consistent.
+  private async issueTokens(
+    user: UserEntity,
+    userAgent?: string,
+  ): Promise<AuthResponse> {
+    const accessToken = this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+    });
+    const refreshToken = await this.refreshTokenService.issue(
+      user.id,
+      userAgent,
+    );
+
+    return { accessToken, refreshToken, user };
+  }
+
+  async register(dto: RegisterDto, userAgent?: string): Promise<AuthResponse> {
     const existing = await this.userService.findByEmail(dto.email);
     if (existing) {
       throw new ConflictException('An account with this email already exists');
@@ -48,15 +68,10 @@ export class AuthService {
       password: hashedPassword,
     });
 
-    const accessToken = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-    });
-
-    return { accessToken, user };
+    return this.issueTokens(user, userAgent);
   }
 
-  async login(dto: LoginDto): Promise<AuthResponse> {
+  async login(dto: LoginDto, userAgent?: string): Promise<AuthResponse> {
     // Fetch user with password (select: false means it's excluded by default)
     const user = await this.userService.findByEmailWithPassword(dto.email);
 
@@ -78,15 +93,36 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    // Remove password from the returned user object
+    delete (user as Partial<typeof user>).password;
+
+    return this.issueTokens(user, userAgent);
+  }
+
+  // Rotates the presented refresh token and mints a fresh access token.
+  async refresh(rawToken: string, userAgent?: string): Promise<AuthResponse> {
+    const { userId, rawToken: refreshToken } =
+      await this.refreshTokenService.rotate(rawToken, userAgent);
+    const user = await this.userService.findById(userId);
+
     const accessToken = this.jwtService.sign({
       sub: user.id,
       email: user.email,
     });
 
-    // Remove password from the returned user object
-    delete (user as Partial<typeof user>).password;
+    return { accessToken, refreshToken, user };
+  }
 
-    return { accessToken, user };
+  // Revokes a single session (the one owning the presented refresh token).
+  async logout(rawToken: string): Promise<{ message: string }> {
+    await this.refreshTokenService.revoke(rawToken);
+    return { message: 'Logged out successfully.' };
+  }
+
+  // Revokes every active session for the user (all devices).
+  async logoutAll(userId: string): Promise<{ message: string }> {
+    await this.refreshTokenService.revokeAllForUser(userId);
+    return { message: 'Logged out of all sessions successfully.' };
   }
 
   /**
@@ -100,7 +136,10 @@ export class AuthService {
    * existing account. That is safe only because GoogleTokenVerifier refuses any
    * token whose email is not verified by Google.
    */
-  async googleLogin(dto: GoogleLoginDto): Promise<AuthResponse> {
+  async googleLogin(
+    dto: GoogleLoginDto,
+    userAgent?: string,
+  ): Promise<AuthResponse> {
     const identity = await this.googleVerifier.verify(dto.idToken);
 
     const existing = await this.userService.findByEmail(identity.email);
@@ -115,12 +154,9 @@ export class AuthService {
       this.logger.log(`Created account from Google sign-in: ${user.email}`);
     }
 
-    const accessToken = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-    });
-
-    return { accessToken, user };
+    // Same token issuance as login()/register() - so the response carries a
+    // refreshToken too and the app needs no special-casing.
+    return this.issueTokens(user, userAgent);
   }
 
   getProfile(userId: string): Promise<UserEntity> {

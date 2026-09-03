@@ -76,7 +76,9 @@ jobs:
           container-name: web
           image: ${{ steps.build.outputs.image }}
           environment-variables: |
-            BACKEND_URL=${{ vars.BACKEND_URL }}             
+            BACKEND_URL=${{ vars.BACKEND_URL }}
+            JWT_EXPIRES_IN=${{ vars.JWT_EXPIRES_IN || '24h' }}
+            REFRESH_TOKEN_EXPIRES_IN=${{ vars.REFRESH_TOKEN_EXPIRES_IN || '30d' }}
 
       - name: Remove placeholder command override
         run: |

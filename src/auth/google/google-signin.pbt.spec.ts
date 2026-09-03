@@ -17,6 +17,7 @@ import { GoogleTokenVerifier } from './google-token-verifier';
 import { AuthService } from '../auth.service';
 import { UserService } from '../../user/user.service';
 import { MailService } from '../../mail/mail.service';
+import { RefreshTokenService } from '../refresh-token.service';
 import { UserEntity } from '../../user/entities/user.entity';
 import { AuthResponse } from '../interfaces/auth-response.interface';
 import { parseClientIds } from '../../config/google.config';
@@ -226,6 +227,10 @@ describe('googleLogin properties', () => {
           useValue: { sendPasswordResetEmail: jest.fn() },
         },
         { provide: JwtService, useValue: { sign: jest.fn(() => 'jwt-token') } },
+        {
+          provide: RefreshTokenService,
+          useValue: { issue: jest.fn(() => Promise.resolve('refresh-token')) },
+        },
         { provide: ConfigService, useValue: { get: jest.fn() } },
         {
           provide: GoogleTokenVerifier,

@@ -44,9 +44,10 @@ describe('AuthController', () => {
         controller.googleLogin({ idToken: 'a-google-id-token' }),
       ).resolves.toBe(response);
 
-      expect(authService.googleLogin).toHaveBeenCalledWith({
-        idToken: 'a-google-id-token',
-      });
+      expect(authService.googleLogin).toHaveBeenCalledWith(
+        { idToken: 'a-google-id-token' },
+        undefined,
+      );
     });
 
     it('propagates errors so the global filter renders them', async () => {

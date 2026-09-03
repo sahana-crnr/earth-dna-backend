@@ -7,5 +7,6 @@ export default registerAs('app', () => ({
   port: parseInt(process.env.PORT ?? '1234', 10),
   apiPrefix: process.env.API_PREFIX || 'api/v1',
   jwtSecret: process.env.JWT_SECRET ?? 'fallback-secret',
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '7d',
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '15m',
+  refreshTokenExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN ?? '30d',
 }));

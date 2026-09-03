@@ -3,9 +3,12 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import type { StringValue } from 'ms';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { RefreshTokenService } from './refresh-token.service';
+import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GoogleTokenVerifier } from './google/google-token-verifier';
 import { UserModule } from '../user/user.module';
@@ -13,6 +16,7 @@ import { UserModule } from '../user/user.module';
 @Module({
   imports: [
     UserModule,
+    TypeOrmModule.forFeature([RefreshTokenEntity]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
@@ -26,6 +30,11 @@ import { UserModule } from '../user/user.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard, GoogleTokenVerifier],
+  providers: [
+    AuthService,
+    RefreshTokenService,
+    JwtAuthGuard,
+    GoogleTokenVerifier,
+  ],
 })
 export class AuthModule {}

@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 import { AuthService } from './auth.service';
 import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
+import { RefreshTokenService } from './refresh-token.service';
 import { UserEntity } from '../user/entities/user.entity';
 import { GoogleTokenVerifier } from './google/google-token-verifier';
 
@@ -29,6 +30,12 @@ describe('AuthService', () => {
   let mailService: jest.Mocked<Pick<MailService, 'sendPasswordResetEmail'>>;
   let googleVerifier: jest.Mocked<Pick<GoogleTokenVerifier, 'verify'>>;
   let jwtService: jest.Mocked<Pick<JwtService, 'sign'>>;
+  let refreshTokenService: jest.Mocked<
+    Pick<
+      RefreshTokenService,
+      'issue' | 'rotate' | 'revoke' | 'revokeAllForUser'
+    >
+  >;
 
   const mockUser: UserEntity = {
     id: 'user-uuid',
@@ -70,6 +77,15 @@ describe('AuthService', () => {
       sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
     };
 
+    refreshTokenService = {
+      issue: jest.fn().mockResolvedValue('refresh-token'),
+      rotate: jest
+        .fn()
+        .mockResolvedValue({ userId: 'user-uuid', rawToken: 'refresh-token' }),
+      revoke: jest.fn().mockResolvedValue(undefined),
+      revokeAllForUser: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -80,6 +96,10 @@ describe('AuthService', () => {
         {
           provide: MailService,
           useValue: mailService,
+        },
+        {
+          provide: RefreshTokenService,
+          useValue: refreshTokenService,
         },
         {
           provide: JwtService,
@@ -146,15 +166,24 @@ describe('AuthService', () => {
         expect.any(String),
         expect.any(Date),
       );
+      // The emailed link points at the backend-hosted reset form, and carries
+      // the RAW token — only its SHA-256 hash is handed to setResetToken.
       expect(mailService.sendPasswordResetEmail).toHaveBeenCalledWith(
         mockUser.email,
         expect.stringMatching(
           /^http:\/\/localhost:1234\/api\/v1\/auth\/reset-password\?token=[a-f0-9]{64}$/,
         ),
       );
+
+      const [, storedToken] = userService.setResetToken.mock.calls[0];
+      const [, resetUrl] = mailService.sendPasswordResetEmail.mock.calls[0];
+      const rawToken = resetUrl.split('token=')[1];
+      expect(storedToken).toBe(
+        crypto.createHash('sha256').update(rawToken).digest('hex'),
+      );
     });
 
-    it('clears token and still returns generic message when mail fails', async () => {
+    it('clears the token and still reports success when mail fails', async () => {
       userService.findByEmail.mockResolvedValue(mockUser);
       mailService.sendPasswordResetEmail.mockRejectedValue(
         new Error('SES MessageRejected'),
