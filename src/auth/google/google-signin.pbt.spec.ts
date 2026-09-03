@@ -12,7 +12,7 @@ import { instanceToPlain } from 'class-transformer';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { OAuth2Client } from 'google-auth-library';
+import { OAuth2Client, type LoginTicket } from 'google-auth-library';
 import { GoogleTokenVerifier } from './google-token-verifier';
 import { AuthService } from '../auth.service';
 import { UserService } from '../../user/user.service';
@@ -35,17 +35,30 @@ const PASSWORD_HASH =
 
 /** Real library behaviour: verifyIdToken enforces `aud` itself and throws. */
 function mockGoogleReturns(payload: unknown, audience: string[]) {
-  return jest
-    .spyOn(OAuth2Client.prototype, 'verifyIdToken')
-    .mockImplementation((): never => {
-      const aud = (payload as { aud?: string })?.aud;
-      if (!aud || !audience.includes(aud)) {
-        return Promise.reject(
-          new Error('Wrong recipient, payload audience != requiredAudience'),
-        );
-      }
-      return Promise.resolve({ getPayload: () => payload } as never);
-    });
+  const impl = (): Promise<LoginTicket> => {
+    const aud = (payload as { aud?: string })?.aud;
+    if (!aud || !audience.includes(aud)) {
+      // Mirrors how the real library reports an audience mismatch.
+      return Promise.reject(
+        new Error('Wrong recipient, payload audience != requiredAudience'),
+      );
+    }
+    // Only the getPayload() slice is ever read by the verifier.
+    return Promise.resolve({
+      getPayload: () => payload,
+    } as unknown as LoginTicket);
+  };
+
+  return (
+    jest
+      .spyOn(OAuth2Client.prototype, 'verifyIdToken')
+      // verifyIdToken is overloaded in google-auth-library, and jest resolves the
+      // spy against the void-returning overload - so the rule flags a correctly
+      // typed Promise-returning stub. impl is Promise<LoginTicket>, which is what
+      // the real method returns.
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
+      .mockImplementation(impl)
+  );
 }
 
 async function buildVerifier(clientIds: string[]) {

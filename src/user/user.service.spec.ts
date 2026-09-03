@@ -1,18 +1,21 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { UserService } from './user.service';
 import { UserEntity } from './entities/user.entity';
 
 describe('UserService', () => {
   let service: UserService;
-  let repo: jest.Mocked<
-    Pick<Repository<UserEntity>, 'create' | 'save' | 'findOne'>
-  >;
+  // Not typed as Pick<Repository<...>>: TypeORM's create() is overloaded, and a
+  // plain jest.fn() cannot satisfy every overload signature.
+  let repo: {
+    create: jest.Mock;
+    save: jest.Mock;
+    findOne: jest.Mock;
+  };
 
   beforeEach(async () => {
     repo = {
-      create: jest.fn((dto) => dto as UserEntity),
+      create: jest.fn((dto: Partial<UserEntity>) => dto),
       save: jest.fn(),
       findOne: jest.fn(),
     };
@@ -33,7 +36,7 @@ describe('UserService', () => {
 
   describe('createGoogleUser', () => {
     it('creates a passwordless account tagged as google', async () => {
-      repo.save.mockResolvedValue({ id: 'new-id' } as UserEntity);
+      repo.save.mockResolvedValue({ id: 'new-id' });
 
       await service.createGoogleUser({
         email: 'jane@example.com',

@@ -19,7 +19,7 @@ import { UserModule } from '../user/user.module';
         secret: config.get<string>('app.jwtSecret'),
         // expiresIn is a branded StringValue in @nestjs/jwt — cast required
         signOptions: {
-          expiresIn: config.get<string>('app.jwtExpiresIn') as any,
+          expiresIn: config.get<string>('app.jwtExpiresIn') as StringValue,
         },
       }),
       inject: [ConfigService],

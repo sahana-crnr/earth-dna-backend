@@ -28,4 +28,7 @@ USER node
 
 EXPOSE 1234
 
-CMD ["node", "dist/main"]
+# Migrations run first; the `&&` means the app never starts against an
+# un-migrated schema. run-migrations.js exits non-zero on failure, so a bad
+# migration stops the container rather than serving broken queries.
+CMD ["sh", "-c", "node dist/database/run-migrations.js && node dist/main"]

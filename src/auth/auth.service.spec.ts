@@ -113,12 +113,24 @@ describe('AuthService', () => {
   });
 
   describe('forgotPassword', () => {
-    it('returns generic message when user does not exist', async () => {
+    // NOTE: this test documents CURRENT behaviour, which changed on develop in
+    // commit 247e70b. It is NOT an endorsement of it.
+    //
+    // forgotPassword now throws BadRequestException('Email not found') for an
+    // unknown address, while a known address returns 200. That difference lets
+    // anyone enumerate which emails have accounts. The original code returned an
+    // identical message either way, with the comment "Always return the same
+    // message to prevent user enumeration" - and auth.controller.ts:309 still
+    // claims that guarantee, which is no longer true.
+    //
+    // Tracked as T11. Change this test if the behaviour is reverted.
+    it('throws for an unknown email (see T11 - enumeration risk)', async () => {
       userService.findByEmail.mockResolvedValue(null);
 
-      const result = await service.forgotPassword('unknown@example.com');
+      await expect(
+        service.forgotPassword('unknown@example.com'),
+      ).rejects.toThrow('Email not found');
 
-      expect(result.message).toContain('If that email is registered');
       expect(userService.setResetToken).not.toHaveBeenCalled();
       expect(mailService.sendPasswordResetEmail).not.toHaveBeenCalled();
     });
@@ -128,7 +140,7 @@ describe('AuthService', () => {
 
       const result = await service.forgotPassword(mockUser.email);
 
-      expect(result.message).toContain('If that email is registered');
+      expect(result.message).toContain('Password reset link has been sent');
       expect(userService.setResetToken).toHaveBeenCalledWith(
         mockUser.id,
         expect.any(String),
@@ -150,7 +162,7 @@ describe('AuthService', () => {
 
       const result = await service.forgotPassword(mockUser.email);
 
-      expect(result.message).toContain('If that email is registered');
+      expect(result.message).toContain('Password reset link has been sent');
       expect(userService.clearResetToken).toHaveBeenCalledWith(mockUser.id);
     });
   });
