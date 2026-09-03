@@ -12,6 +12,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { validateJwtSecret } from './config/validate-jwt-secret';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -22,6 +23,9 @@ async function bootstrap() {
   const port = config.get<number>('app.port') ?? 1234;
   const apiPrefix = config.get<string>('app.apiPrefix') ?? 'api/v1';
   const nodeEnv = config.get<string>('app.nodeEnv') ?? 'development';
+
+  // Refuse to start rather than sign tokens with a known-public key.
+  validateJwtSecret(config.get<string>('app.jwtSecret'));
 
   // ─── Global prefix ─────────────────────────────────────────────────────────
   app.setGlobalPrefix(apiPrefix);

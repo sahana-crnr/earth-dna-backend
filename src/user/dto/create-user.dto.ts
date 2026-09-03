@@ -1,5 +1,5 @@
 // DTO for creating a new user. Defines the expected request body fields and
-// validation rules. zipCode is optional; all other fields are required.
+// validation rules. zipCode and countryCode are optional; all others required.
 import {
   IsEmail,
   IsString,
@@ -27,6 +27,15 @@ export class CreateUserDto {
   @ApiProperty({ example: 'USA' })
   @IsString()
   country: string;
+
+  // The app computes a country code on sign-up. Before this field existed the
+  // global ValidationPipe (forbidNonWhitelisted) rejected the whole request with
+  // a 400 rather than ignoring the extra key.
+  @ApiProperty({ example: '+1', required: false })
+  @IsString()
+  @IsOptional()
+  @MaxLength(10)
+  countryCode?: string;
 
   @ApiProperty({ example: '10001', required: false })
   @IsString()

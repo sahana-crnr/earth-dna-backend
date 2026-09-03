@@ -38,6 +38,55 @@ export class UserService {
     return this.userRepo.save(user);
   }
 
+  /**
+   * Creates a user from a verified Google identity.
+   *
+   * No password and no country: Google already proved who they are, and a Google
+   * ID token carries no country. Both columns are nullable as of the
+   * AddGoogleAuthSupport migration.
+   *
+   * Concurrency: two simultaneous first-time sign-ins for the same email both see
+   * findByEmail() return null and both try to insert. The unique constraint on
+   * email lets exactly one win. Rather than surfacing that as a 500, the loser
+   * catches PostgreSQL unique_violation (23505) and re-reads the row the winner
+   * just wrote. The database stays the source of truth; we just handle losing.
+   */
+  async createGoogleUser(params: {
+    email: string;
+    fullName: string;
+  }): Promise<UserEntity> {
+    const user = this.userRepo.create({
+      email: params.email,
+      fullName: params.fullName,
+      password: null,
+      country: null,
+      countryCode: null,
+      zipCode: null,
+      authProvider: 'google',
+    });
+
+    try {
+      return await this.userRepo.save(user);
+    } catch (err) {
+      if (!UserService.isUniqueViolation(err)) throw err;
+
+      const existing = await this.findByEmail(params.email);
+      if (existing) return existing;
+
+      // The constraint fired but the row is not there - genuinely unexpected.
+      throw err;
+    }
+  }
+
+  /** PostgreSQL unique_violation. */
+  private static isUniqueViolation(err: unknown): boolean {
+    return (
+      typeof err === 'object' &&
+      err !== null &&
+      (err as { code?: string }).code === '23505'
+    );
+  }
+
   setResetToken(
     userId: string,
     hashedToken: string,

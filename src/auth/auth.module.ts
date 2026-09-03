@@ -10,6 +10,7 @@ import { AuthService } from './auth.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { GoogleTokenVerifier } from './google/google-token-verifier';
 import { UserModule } from '../user/user.module';
 
 @Module({
@@ -20,6 +21,7 @@ import { UserModule } from '../user/user.module';
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('app.jwtSecret'),
+        // expiresIn is a branded StringValue in @nestjs/jwt — cast required
         signOptions: {
           expiresIn: config.get<string>('app.jwtExpiresIn') as StringValue,
         },
@@ -28,6 +30,11 @@ import { UserModule } from '../user/user.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, RefreshTokenService, JwtAuthGuard],
+  providers: [
+    AuthService,
+    RefreshTokenService,
+    JwtAuthGuard,
+    GoogleTokenVerifier,
+  ],
 })
 export class AuthModule {}
