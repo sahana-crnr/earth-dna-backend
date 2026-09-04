@@ -3,7 +3,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { MoreThan, Repository } from 'typeorm';
-import { UserEntity } from './entities/user.entity';
+import { UserEntity, SocialProvider } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 
 @Injectable()
@@ -38,20 +38,52 @@ export class UserService {
     return this.userRepo.save(user);
   }
 
+  /** Finds the account a social provider's stable user ID (`sub`) is bound to. */
+  findByProvider(
+    provider: SocialProvider,
+    providerUserId: string,
+  ): Promise<UserEntity | null> {
+    return this.userRepo.findOne({
+      where: { authProvider: provider, providerUserId },
+    });
+  }
+
   /**
    * Creates a user from a verified Google identity.
    *
-   * No password and no country: Google already proved who they are, and a Google
-   * ID token carries no country. Both columns are nullable as of the
+   * Kept as a named entry point so the Google flow and its tests are untouched;
+   * it is a thin alias over createSocialUser with no provider user ID (Google
+   * accounts are keyed on verified email only).
+   */
+  createGoogleUser(params: {
+    email: string;
+    fullName: string;
+  }): Promise<UserEntity> {
+    return this.createSocialUser({
+      provider: 'google',
+      providerUserId: null,
+      email: params.email,
+      fullName: params.fullName,
+    });
+  }
+
+  /**
+   * Creates a user from a verified social identity (Google, Facebook, Apple).
+   *
+   * No password and no country: the provider already proved who they are, and
+   * no provider token carries a country. Both columns are nullable as of the
    * AddGoogleAuthSupport migration.
    *
-   * Concurrency: two simultaneous first-time sign-ins for the same email both see
-   * findByEmail() return null and both try to insert. The unique constraint on
-   * email lets exactly one win. Rather than surfacing that as a 500, the loser
-   * catches PostgreSQL unique_violation (23505) and re-reads the row the winner
-   * just wrote. The database stays the source of truth; we just handle losing.
+   * Concurrency: two simultaneous first-time sign-ins for the same identity both
+   * see the lookups return null and both try to insert. The unique constraints
+   * (email, and the partial (authProvider, providerUserId) index) let exactly one
+   * win. Rather than surfacing that as a 500, the loser catches PostgreSQL
+   * unique_violation (23505) and re-reads the row the winner just wrote. The
+   * database stays the source of truth; we just handle losing.
    */
-  async createGoogleUser(params: {
+  async createSocialUser(params: {
+    provider: SocialProvider;
+    providerUserId: string | null;
     email: string;
     fullName: string;
   }): Promise<UserEntity> {
@@ -62,7 +94,8 @@ export class UserService {
       country: null,
       countryCode: null,
       zipCode: null,
-      authProvider: 'google',
+      authProvider: params.provider,
+      providerUserId: params.providerUserId,
     });
 
     try {
@@ -70,8 +103,15 @@ export class UserService {
     } catch (err) {
       if (!UserService.isUniqueViolation(err)) throw err;
 
-      const existing = await this.findByEmail(params.email);
-      if (existing) return existing;
+      // Either constraint may have fired; check the provider key first, since
+      // that is the one the sign-in flow itself looks up first.
+      const byProvider = params.providerUserId
+        ? await this.findByProvider(params.provider, params.providerUserId)
+        : null;
+      if (byProvider) return byProvider;
+
+      const byEmail = await this.findByEmail(params.email);
+      if (byEmail) return byEmail;
 
       // The constraint fired but the row is not there - genuinely unexpected.
       throw err;

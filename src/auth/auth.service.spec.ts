@@ -1,7 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  UnauthorizedException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { AuthService } from './auth.service';
@@ -10,6 +14,9 @@ import { MailService } from '../mail/mail.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { UserEntity } from '../user/entities/user.entity';
 import { GoogleTokenVerifier } from './google/google-token-verifier';
+import { FacebookTokenVerifier } from './facebook/facebook-token-verifier';
+import { AppleTokenVerifier } from './apple/apple-token-verifier';
+import { SocialIdentity } from './social/social-identity';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -25,10 +32,14 @@ describe('AuthService', () => {
       | 'findByResetToken'
       | 'updatePassword'
       | 'createGoogleUser'
+      | 'findByProvider'
+      | 'createSocialUser'
     >
   >;
   let mailService: jest.Mocked<Pick<MailService, 'sendPasswordResetEmail'>>;
   let googleVerifier: jest.Mocked<Pick<GoogleTokenVerifier, 'verify'>>;
+  let facebookVerifier: jest.Mocked<Pick<FacebookTokenVerifier, 'verify'>>;
+  let appleVerifier: jest.Mocked<Pick<AppleTokenVerifier, 'verify'>>;
   let jwtService: jest.Mocked<Pick<JwtService, 'sign'>>;
   let refreshTokenService: jest.Mocked<
     Pick<
@@ -48,8 +59,22 @@ describe('AuthService', () => {
     countryCode: null,
     zipCode: null,
     authProvider: 'local',
+    providerUserId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
+  };
+
+  const facebookIdentity: SocialIdentity = {
+    provider: 'facebook',
+    providerUserId: 'fb-123',
+    email: 'jane@example.com',
+    fullName: 'Jane Doe',
+  };
+  const appleIdentity: SocialIdentity = {
+    provider: 'apple',
+    providerUserId: 'apple-001.abc',
+    email: 'jane@privaterelay.appleid.com',
+    fullName: 'Jane Doe',
   };
 
   beforeEach(async () => {
@@ -63,7 +88,14 @@ describe('AuthService', () => {
       findByResetToken: jest.fn(),
       updatePassword: jest.fn().mockResolvedValue(undefined),
       createGoogleUser: jest.fn(),
+      findByProvider: jest.fn().mockResolvedValue(null),
+      createSocialUser: jest.fn(),
     };
+
+    facebookVerifier = {
+      verify: jest.fn().mockResolvedValue(facebookIdentity),
+    };
+    appleVerifier = { verify: jest.fn().mockResolvedValue(appleIdentity) };
 
     googleVerifier = {
       verify: jest.fn().mockResolvedValue({
@@ -109,6 +141,8 @@ describe('AuthService', () => {
           provide: GoogleTokenVerifier,
           useValue: googleVerifier,
         },
+        { provide: FacebookTokenVerifier, useValue: facebookVerifier },
+        { provide: AppleTokenVerifier, useValue: appleVerifier },
         {
           provide: ConfigService,
           useValue: {
@@ -317,6 +351,153 @@ describe('AuthService', () => {
     it('signs the same JWT payload as the password login flow', async () => {
       userService.findByEmail.mockResolvedValue(mockUser);
       await service.googleLogin({ idToken: 'good' });
+
+      expect(jwtService.sign).toHaveBeenCalledWith({
+        sub: mockUser.id,
+        email: mockUser.email,
+      });
+    });
+  });
+  describe('facebookLogin / appleLogin (shared socialLogin)', () => {
+    const created = (over: Partial<UserEntity>): UserEntity => ({
+      ...mockUser,
+      password: null,
+      country: null,
+      ...over,
+    });
+
+    it('finds the user by (provider, sub) first and never touches email lookup', async () => {
+      const fbUser = created({
+        authProvider: 'facebook',
+        providerUserId: 'fb-123',
+      });
+      userService.findByProvider.mockResolvedValue(fbUser);
+
+      const result = await service.facebookLogin({ accessToken: 'tok' }, 'ua');
+
+      expect(userService.findByProvider).toHaveBeenCalledWith(
+        'facebook',
+        'fb-123',
+      );
+      expect(userService.findByEmail).not.toHaveBeenCalled();
+      expect(userService.createSocialUser).not.toHaveBeenCalled();
+      expect(result.user).toBe(fbUser);
+      expect(refreshTokenService.issue).toHaveBeenCalledWith(fbUser.id, 'ua');
+    });
+
+    it('auto-links onto an existing password account by email without rewriting it', async () => {
+      userService.findByProvider.mockResolvedValue(null);
+      userService.findByEmail.mockResolvedValue(mockUser);
+
+      const result = await service.facebookLogin({ accessToken: 'tok' });
+
+      expect(result.user.id).toBe(mockUser.id);
+      expect(userService.createSocialUser).not.toHaveBeenCalled();
+      // First provider wins: nothing is written back to the existing row.
+      expect(userService.updatePassword).not.toHaveBeenCalled();
+    });
+
+    it('creates a new account carrying the provider user id', async () => {
+      const fbUser = created({
+        authProvider: 'facebook',
+        providerUserId: 'fb-123',
+      });
+      userService.findByProvider.mockResolvedValue(null);
+      userService.findByEmail.mockResolvedValue(null);
+      userService.createSocialUser.mockResolvedValue(fbUser);
+
+      const result = await service.facebookLogin({ accessToken: 'tok' });
+
+      expect(userService.createSocialUser).toHaveBeenCalledWith({
+        provider: 'facebook',
+        providerUserId: 'fb-123',
+        email: 'jane@example.com',
+        fullName: 'Jane Doe',
+      });
+      expect(result.user).toBe(fbUser);
+      expect(result.accessToken).toBe('jwt-token');
+    });
+
+    it('rejects a brand-new Facebook identity that has no email with 422, not 500', async () => {
+      facebookVerifier.verify.mockResolvedValue({
+        ...facebookIdentity,
+        email: null,
+      });
+      userService.findByProvider.mockResolvedValue(null);
+
+      await expect(
+        service.facebookLogin({ accessToken: 'tok' }),
+      ).rejects.toThrow(UnprocessableEntityException);
+      expect(userService.findByEmail).not.toHaveBeenCalled();
+      expect(userService.createSocialUser).not.toHaveBeenCalled();
+    });
+
+    it('still signs in a known no-email Facebook user via the provider key', async () => {
+      const fbUser = created({
+        authProvider: 'facebook',
+        providerUserId: 'fb-123',
+      });
+      facebookVerifier.verify.mockResolvedValue({
+        ...facebookIdentity,
+        email: null,
+      });
+      userService.findByProvider.mockResolvedValue(fbUser);
+
+      await expect(
+        service.facebookLogin({ accessToken: 'tok' }),
+      ).resolves.toMatchObject({ user: fbUser });
+    });
+
+    it('passes the one-time Apple fullName hint through to the verifier', async () => {
+      userService.findByProvider.mockResolvedValue(null);
+      userService.findByEmail.mockResolvedValue(null);
+      userService.createSocialUser.mockResolvedValue(
+        created({ authProvider: 'apple', providerUserId: 'apple-001.abc' }),
+      );
+
+      await service.appleLogin({
+        identityToken: 'tok',
+        fullName: 'Kiran Jadhav',
+      });
+
+      expect(appleVerifier.verify).toHaveBeenCalledWith('tok', 'Kiran Jadhav');
+      expect(userService.createSocialUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'apple',
+          providerUserId: 'apple-001.abc',
+        }),
+      );
+    });
+
+    it('keeps the stored name for a returning Apple user even when the body has no name', async () => {
+      const existing = created({
+        authProvider: 'apple',
+        providerUserId: 'apple-001.abc',
+        fullName: 'Stored Name',
+      });
+      userService.findByProvider.mockResolvedValue(existing);
+
+      const result = await service.appleLogin({ identityToken: 'tok' });
+
+      expect(result.user.fullName).toBe('Stored Name');
+      expect(userService.createSocialUser).not.toHaveBeenCalled();
+    });
+
+    it('propagates verifier rejection and never touches the database', async () => {
+      appleVerifier.verify.mockRejectedValue(
+        new UnauthorizedException('Invalid Apple token'),
+      );
+
+      await expect(
+        service.appleLogin({ identityToken: 'bad' }),
+      ).rejects.toThrow('Invalid Apple token');
+      expect(userService.findByProvider).not.toHaveBeenCalled();
+      expect(userService.findByEmail).not.toHaveBeenCalled();
+    });
+
+    it('signs the same JWT payload as the password login flow', async () => {
+      userService.findByProvider.mockResolvedValue(mockUser);
+      await service.facebookLogin({ accessToken: 'tok' });
 
       expect(jwtService.sign).toHaveBeenCalledWith({
         sub: mockUser.id,

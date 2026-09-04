@@ -89,4 +89,77 @@ describe('UserService', () => {
       ).rejects.toThrow('connection lost');
     });
   });
+  describe('createSocialUser', () => {
+    it('creates a passwordless account carrying the provider user id', async () => {
+      repo.save.mockResolvedValue({ id: 'new-id' });
+
+      await service.createSocialUser({
+        provider: 'apple',
+        providerUserId: 'apple-001',
+        email: 'jane@privaterelay.appleid.com',
+        fullName: 'Jane Doe',
+      });
+
+      expect(repo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: 'jane@privaterelay.appleid.com',
+          password: null,
+          country: null,
+          authProvider: 'apple',
+          providerUserId: 'apple-001',
+        }),
+      );
+    });
+
+    it('recovers from a lost race on the provider key by re-reading that row', async () => {
+      const winner = { id: 'winner-id', providerUserId: 'fb-1' } as UserEntity;
+      repo.save.mockRejectedValue(
+        Object.assign(new Error('duplicate'), { code: '23505' }),
+      );
+      repo.findOne.mockResolvedValueOnce(winner);
+
+      await expect(
+        service.createSocialUser({
+          provider: 'facebook',
+          providerUserId: 'fb-1',
+          email: 'jane@example.com',
+          fullName: 'Jane Doe',
+        }),
+      ).resolves.toBe(winner);
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { authProvider: 'facebook', providerUserId: 'fb-1' },
+      });
+    });
+
+    it('falls back to the email row when the race was lost on the email constraint', async () => {
+      const winner = {
+        id: 'winner-id',
+        email: 'jane@example.com',
+      } as UserEntity;
+      repo.save.mockRejectedValue(
+        Object.assign(new Error('duplicate'), { code: '23505' }),
+      );
+      // First findOne = by provider (miss), second = by email (hit).
+      repo.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(winner);
+
+      await expect(
+        service.createSocialUser({
+          provider: 'facebook',
+          providerUserId: 'fb-2',
+          email: 'jane@example.com',
+          fullName: 'Jane Doe',
+        }),
+      ).resolves.toBe(winner);
+    });
+  });
+
+  describe('findByProvider', () => {
+    it('queries by (authProvider, providerUserId)', async () => {
+      repo.findOne.mockResolvedValue(null);
+      await service.findByProvider('apple', 'x');
+      expect(repo.findOne).toHaveBeenCalledWith({
+        where: { authProvider: 'apple', providerUserId: 'x' },
+      });
+    });
+  });
 });

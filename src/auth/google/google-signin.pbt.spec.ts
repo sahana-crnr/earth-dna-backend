@@ -14,6 +14,8 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { OAuth2Client, type LoginTicket } from 'google-auth-library';
 import { GoogleTokenVerifier } from './google-token-verifier';
+import { FacebookTokenVerifier } from '../facebook/facebook-token-verifier';
+import { AppleTokenVerifier } from '../apple/apple-token-verifier';
 import { AuthService } from '../auth.service';
 import { UserService } from '../../user/user.service';
 import { MailService } from '../../mail/mail.service';
@@ -183,6 +185,7 @@ describe('googleLogin properties', () => {
       countryCode: null,
       zipCode: null,
       authProvider: 'google',
+      providerUserId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
       ...over,
@@ -232,6 +235,8 @@ describe('googleLogin properties', () => {
           useValue: { issue: jest.fn(() => Promise.resolve('refresh-token')) },
         },
         { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: FacebookTokenVerifier, useValue: { verify: jest.fn() } },
+        { provide: AppleTokenVerifier, useValue: { verify: jest.fn() } },
         {
           provide: GoogleTokenVerifier,
           useValue: {

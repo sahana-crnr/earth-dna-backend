@@ -11,6 +11,9 @@ import { RefreshTokenService } from './refresh-token.service';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GoogleTokenVerifier } from './google/google-token-verifier';
+import { FacebookTokenVerifier } from './facebook/facebook-token-verifier';
+import { AppleTokenVerifier } from './apple/apple-token-verifier';
+import { JwksJwtVerifier } from './social/jwks-jwt-verifier';
 import { UserModule } from '../user/user.module';
 
 @Module({
@@ -35,6 +38,9 @@ import { UserModule } from '../user/user.module';
     RefreshTokenService,
     JwtAuthGuard,
     GoogleTokenVerifier,
+    JwksJwtVerifier,
+    FacebookTokenVerifier,
+    AppleTokenVerifier,
   ],
 })
 export class AuthModule {}

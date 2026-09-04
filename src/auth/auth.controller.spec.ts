@@ -6,7 +6,15 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 describe('AuthController', () => {
   let controller: AuthController;
   let authService: jest.Mocked<
-    Pick<AuthService, 'login' | 'register' | 'googleLogin' | 'getProfile'>
+    Pick<
+      AuthService,
+      | 'login'
+      | 'register'
+      | 'googleLogin'
+      | 'facebookLogin'
+      | 'appleLogin'
+      | 'getProfile'
+    >
   >;
 
   beforeEach(async () => {
@@ -14,6 +22,8 @@ describe('AuthController', () => {
       login: jest.fn(),
       register: jest.fn(),
       googleLogin: jest.fn(),
+      facebookLogin: jest.fn(),
+      appleLogin: jest.fn(),
       getProfile: jest.fn(),
     };
 
@@ -57,6 +67,49 @@ describe('AuthController', () => {
 
       await expect(controller.googleLogin({ idToken: 'bad' })).rejects.toThrow(
         'Invalid Google token',
+      );
+    });
+  });
+  describe('POST /auth/facebook', () => {
+    it('delegates to AuthService.facebookLogin with the dto and user-agent', async () => {
+      const response = { accessToken: 'jwt', user: { email: 'j@e.com' } };
+      authService.facebookLogin.mockResolvedValue(response as never);
+
+      await expect(
+        controller.facebookLogin({ accessToken: 'EAAtoken' }, 'EarthDNA/1.0'),
+      ).resolves.toBe(response);
+
+      expect(authService.facebookLogin).toHaveBeenCalledWith(
+        { accessToken: 'EAAtoken' },
+        'EarthDNA/1.0',
+      );
+    });
+
+    it('propagates errors so the global filter renders them', async () => {
+      authService.facebookLogin.mockRejectedValue(
+        new Error('Invalid Facebook token'),
+      );
+      await expect(
+        controller.facebookLogin({ accessToken: 'bad' }),
+      ).rejects.toThrow('Invalid Facebook token');
+    });
+  });
+
+  describe('POST /auth/apple', () => {
+    it('delegates to AuthService.appleLogin with the dto (incl. optional fullName)', async () => {
+      const response = { accessToken: 'jwt', user: { email: 'j@e.com' } };
+      authService.appleLogin.mockResolvedValue(response as never);
+
+      await expect(
+        controller.appleLogin(
+          { identityToken: 'apple-jwt', fullName: 'Kiran Jadhav' },
+          undefined,
+        ),
+      ).resolves.toBe(response);
+
+      expect(authService.appleLogin).toHaveBeenCalledWith(
+        { identityToken: 'apple-jwt', fullName: 'Kiran Jadhav' },
+        undefined,
       );
     });
   });
