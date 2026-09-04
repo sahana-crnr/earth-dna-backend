@@ -7,6 +7,7 @@ import {
   ConflictException,
   UnauthorizedException,
   BadRequestException,
+  UnprocessableEntityException,
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -19,7 +20,12 @@ import { RefreshTokenService } from './refresh-token.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
+import { FacebookLoginDto } from './dto/facebook-login.dto';
+import { AppleLoginDto } from './dto/apple-login.dto';
 import { GoogleTokenVerifier } from './google/google-token-verifier';
+import { FacebookTokenVerifier } from './facebook/facebook-token-verifier';
+import { AppleTokenVerifier } from './apple/apple-token-verifier';
+import { SocialIdentity } from './social/social-identity';
 import { UserEntity } from '../user/entities/user.entity';
 import { AuthResponse } from './interfaces/auth-response.interface';
 
@@ -36,6 +42,8 @@ export class AuthService {
     private readonly refreshTokenService: RefreshTokenService,
     private readonly config: ConfigService,
     private readonly googleVerifier: GoogleTokenVerifier,
+    private readonly facebookVerifier: FacebookTokenVerifier,
+    private readonly appleVerifier: AppleTokenVerifier,
   ) {}
 
   // Signs a short-lived access JWT and issues a rotating refresh token.
@@ -156,6 +164,87 @@ export class AuthService {
 
     // Same token issuance as login()/register() - so the response carries a
     // refreshToken too and the app needs no special-casing.
+    return this.issueTokens(user, userAgent);
+  }
+
+  /**
+   * Signs a user in with a Facebook token (Limited Login JWT on iOS, classic
+   * access token on Android - the verifier tells them apart).
+   */
+  async facebookLogin(
+    dto: FacebookLoginDto,
+    userAgent?: string,
+  ): Promise<AuthResponse> {
+    const identity = await this.facebookVerifier.verify(dto.accessToken);
+    return this.socialLogin(identity, userAgent);
+  }
+
+  /**
+   * Signs a user in with an Apple identity token. The optional fullName in the
+   * body is Apple's one-time name delivery and only matters on account creation.
+   */
+  async appleLogin(
+    dto: AppleLoginDto,
+    userAgent?: string,
+  ): Promise<AuthResponse> {
+    const identity = await this.appleVerifier.verify(
+      dto.identityToken,
+      dto.fullName,
+    );
+    return this.socialLogin(identity, userAgent);
+  }
+
+  /**
+   * Shared find-or-link-or-create for providers that give us a stable user ID.
+   *
+   * Lookup order:
+   *   1. (provider, providerUserId) - the provider's own stable key. Survives an
+   *      email change or an Apple relay address being turned off.
+   *   2. email - auto-link onto an existing local/Google/other account. First
+   *      provider wins: the existing row is NOT rewritten, so a Google-created
+   *      account stays a Google account and next time we simply fall through to
+   *      this step again. Safe because every verifier only passes through
+   *      provider-confirmed addresses.
+   *   3. create.
+   *
+   * A brand-new identity with no email cannot be created: email is the unique
+   * key the rest of the system (profile, password reset, the app's session
+   * store) relies on. 422 rather than 401 - the token was perfectly valid, the
+   * account just lacks what we need, and the message is actionable for the user.
+   */
+  private async socialLogin(
+    identity: SocialIdentity,
+    userAgent?: string,
+  ): Promise<AuthResponse> {
+    const label = identity.provider === 'apple' ? 'Apple' : 'Facebook';
+
+    let user = await this.userService.findByProvider(
+      identity.provider,
+      identity.providerUserId,
+    );
+
+    if (!user && identity.email) {
+      user = await this.userService.findByEmail(identity.email);
+    }
+
+    if (!user) {
+      if (!identity.email) {
+        this.logger.warn(
+          `${label} sign-in rejected: no email on account ${identity.providerUserId}`,
+        );
+        throw new UnprocessableEntityException(
+          `Your ${label} account has no email address. Please sign up with email instead.`,
+        );
+      }
+      user = await this.userService.createSocialUser({
+        provider: identity.provider,
+        providerUserId: identity.providerUserId,
+        email: identity.email,
+        fullName: identity.fullName,
+      });
+      this.logger.log(`Created account from ${label} sign-in: ${user.email}`);
+    }
+
     return this.issueTokens(user, userAgent);
   }
 

@@ -7,7 +7,14 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { appConfig, databaseConfig, mailConfig, googleConfig } from './config';
+import {
+  appConfig,
+  databaseConfig,
+  mailConfig,
+  googleConfig,
+  facebookConfig,
+  appleConfig,
+} from './config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
@@ -19,7 +26,14 @@ import { MailModule } from './mail/mail.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [`.env.${process.env.NODE_ENV || 'local'}`, '.env'],
-      load: [appConfig, databaseConfig, mailConfig, googleConfig],
+      load: [
+        appConfig,
+        databaseConfig,
+        mailConfig,
+        googleConfig,
+        facebookConfig,
+        appleConfig,
+      ],
       cache: true,
     }),
 

@@ -11,7 +11,10 @@ import { Exclude } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 
 /** How the account was created. Drives whether password login is possible. */
-export type AuthProvider = 'local' | 'google';
+export type AuthProvider = 'local' | 'google' | 'facebook' | 'apple';
+
+/** Providers that hand us a stable user ID (`sub`) we key accounts on. */
+export type SocialProvider = Exclude<AuthProvider, 'local'>;
 
 @Entity('users')
 export class UserEntity {
@@ -60,6 +63,15 @@ export class UserEntity {
   @Exclude()
   @Column({ type: 'varchar', length: 20, default: 'local' })
   authProvider: AuthProvider;
+
+  // The provider's own stable user ID (`sub` claim) for Facebook / Apple
+  // accounts. Null for local and Google accounts. Looked up BEFORE email so a
+  // user whose provider email changes or disappears still lands in their
+  // account. Unique per (authProvider, providerUserId) - see the
+  // AddSocialProviderIds migration.
+  @Exclude()
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  providerUserId: string | null;
 
   @ApiProperty()
   @CreateDateColumn()

@@ -1,5 +1,6 @@
 // Auth controller. Handles all authentication-related HTTP routes.
 // Exposes: POST /auth/register, POST /auth/login, GET /auth/profile,
+//          POST /auth/google, POST /auth/facebook, POST /auth/apple,
 //          POST /auth/forgot-password, GET /auth/reset-password, POST /auth/reset-password
 import {
   Controller,
@@ -25,6 +26,8 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
+import { FacebookLoginDto } from './dto/facebook-login.dto';
+import { AppleLoginDto } from './dto/apple-login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -325,6 +328,66 @@ export class AuthController {
     @Headers('user-agent') userAgent?: string,
   ): Promise<AuthResponseDto> {
     return this.authService.googleLogin(dto, userAgent);
+  }
+
+  @Post('facebook')
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Sign in with a Facebook token (Limited Login JWT on iOS, classic access token on Android)',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Sign-in successful. Identical response shape to POST /auth/login.',
+    type: AuthResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'accessToken missing or malformed body',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid, expired, or wrong-app token',
+  })
+  @ApiResponse({
+    status: 422,
+    description: 'Token is valid but the Facebook account has no email address',
+  })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
+  facebookLogin(
+    @Body() dto: FacebookLoginDto,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AuthResponseDto> {
+    return this.authService.facebookLogin(dto, userAgent);
+  }
+
+  @Post('apple')
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sign in with an Apple identity token' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Sign-in successful. Identical response shape to POST /auth/login.',
+    type: AuthResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'identityToken missing or malformed body',
+  })
+  @ApiResponse({
+    status: 401,
+    description:
+      'Invalid, expired, or wrong-audience token; or the Apple email is unverified',
+  })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
+  appleLogin(
+    @Body() dto: AppleLoginDto,
+    @Headers('user-agent') userAgent?: string,
+  ): Promise<AuthResponseDto> {
+    return this.authService.appleLogin(dto, userAgent);
   }
 
   @Get('profile')
