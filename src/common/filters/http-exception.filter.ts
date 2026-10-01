@@ -1,5 +1,7 @@
 // Global exception filter. Catches every thrown exception and returns a
 // consistent JSON error response: { statusCode, timestamp, path, message }.
+// When the exception carries a `code` (see common/errors/api-error.ts) it is
+// added as `code`, plus `details` when present. Other responses are unchanged.
 import {
   ExceptionFilter,
   Catch,
@@ -34,14 +36,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       exception instanceof Error ? exception.stack : String(exception),
     );
 
+    const body =
+      typeof message === 'object' && message !== null
+        ? (message as Record<string, unknown>)
+        : null;
+
     response.status(status).json({
       statusCode: status,
       timestamp: new Date().toISOString(),
       path: request.url,
-      message:
-        typeof message === 'object' && message !== null && 'message' in message
-          ? (message as Record<string, unknown>).message
-          : message,
+      message: body && 'message' in body ? body.message : message,
+      ...(body && typeof body.code === 'string' ? { code: body.code } : {}),
+      ...(body && body.details !== undefined ? { details: body.details } : {}),
     });
   }
 }

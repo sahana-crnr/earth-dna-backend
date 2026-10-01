@@ -1,5 +1,5 @@
 // Root module of the application. Wires together config, database, and all
-// feature modules (AuthModule, UserModule).
+// feature modules (AuthModule, UserModule, ScanModule).
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -14,11 +14,15 @@ import {
   googleConfig,
   facebookConfig,
   appleConfig,
+  storageConfig,
+  scanConfig,
 } from './config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { MailModule } from './mail/mail.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { ScanModule } from './scan/scan.module';
 
 @Module({
   imports: [
@@ -33,6 +37,8 @@ import { MailModule } from './mail/mail.module';
         googleConfig,
         facebookConfig,
         appleConfig,
+        storageConfig,
+        scanConfig,
       ],
       cache: true,
     }),
@@ -67,6 +73,10 @@ import { MailModule } from './mail/mail.module';
     AuthModule,
 
     UserModule,
+
+    // F1 scan sessions (+ daily abandon job, hence the scheduler).
+    ScheduleModule.forRoot(),
+    ScanModule,
   ],
   controllers: [AppController],
   providers: [

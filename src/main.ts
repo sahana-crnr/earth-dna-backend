@@ -13,6 +13,7 @@ import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { validateJwtSecret } from './config/validate-jwt-secret';
+import { parseClientIds } from './config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -31,7 +32,12 @@ async function bootstrap() {
   app.setGlobalPrefix(apiPrefix);
 
   // ─── CORS ──────────────────────────────────────────────────────────────────
+  // CORS_ORIGINS (comma list) restricts browser origins. Unset keeps the
+  // previous behaviour (any origin); mobile apps send no Origin header, so
+  // this only affects browsers such as the local test UI.
+  const corsOrigins = parseClientIds(process.env.CORS_ORIGINS);
   app.enableCors({
+    ...(corsOrigins.length > 0 ? { origin: corsOrigins } : {}),
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
