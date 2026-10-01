@@ -115,14 +115,19 @@ export const FILE_EXT: Record<PhotoType, string> = {
   png: 'png',
 };
 
-/** S3 key layout (data-model.md P1). */
+/**
+ * S3 key layout (data-model.md P1): `scans/{scanId}/{shoeId}/{view}-{uid}.{ext}`.
+ * `uid` makes every upload unique so a retake never overwrites the object a
+ * committed row points at; the old object is deleted after commit.
+ */
 export function scanPhotoKey(
   scanId: string,
   shoeId: string,
   view: ShoeView,
   type: PhotoType,
+  uid: string,
 ): string {
-  return `scans/${scanId}/${shoeId}/${view}.${FILE_EXT[type]}`;
+  return `scans/${scanId}/${shoeId}/${view}-${uid}.${FILE_EXT[type]}`;
 }
 
 // ─── P5: album manifest ──────────────────────────────────────────────────────

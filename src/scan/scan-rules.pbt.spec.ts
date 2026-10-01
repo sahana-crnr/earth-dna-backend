@@ -184,8 +184,12 @@ describe('checkPhoto + config parsing', () => {
   });
 
   it('scanPhotoKey follows the S3 layout', () => {
-    expect(scanPhotoKey('s', 'h', 'top', 'jpeg')).toBe('scans/s/h/top.jpg');
-    expect(scanPhotoKey('s', 'h', 'sole', 'png')).toBe('scans/s/h/sole.png');
+    expect(scanPhotoKey('s', 'h', 'top', 'jpeg', 'u1')).toBe(
+      'scans/s/h/top-u1.jpg',
+    );
+    expect(scanPhotoKey('s', 'h', 'sole', 'png', 'u2')).toBe(
+      'scans/s/h/sole-u2.png',
+    );
   });
 });
 

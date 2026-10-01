@@ -502,6 +502,70 @@ d('ScanService (integration, real Postgres)', () => {
     ).toBe('BATCH_TOO_LARGE');
   });
 
+  it('PR#11-1: parallel uploads of the same view leave one row and one object', async () => {
+    const userId = await newUser();
+    const s = await service.createDraft(userId);
+    const shoeId = (await service.addShoe(userId, s.id)).shoes[0].id;
+    const codes = await Promise.all(
+      [1, 2, 3, 4].map(() =>
+        code(service.uploadPhoto(userId, s.id, shoeId, 'top', file(PNG), null)),
+      ),
+    );
+    expect(codes).toEqual(['OK', 'OK', 'OK', 'OK']);
+    const v = await service.get(userId, s.id);
+    expect(v.shoes[0].photos.filter((p) => p.view === 'top')).toHaveLength(1);
+    await expectStorageMatchesDb(s.id);
+    expect(
+      [...storage.objects.keys()].filter((k) => k.startsWith(`scans/${s.id}/`)),
+    ).toHaveLength(1);
+  });
+
+  it('PR#11-5: open-draft limit holds under parallel creates', async () => {
+    const userId = await newUser();
+    const limited = new ScanService(ds.getRepository(ScanEntity), ds, storage, {
+      get: (k: string) =>
+        k === 'scan' ? { ...CFG, maxOpenDrafts: 1 } : undefined,
+    } as ConfigService);
+    const codes = await Promise.all(
+      [1, 2, 3, 4, 5].map(() => code(limited.createDraft(userId))),
+    );
+    expect(codes.filter((c) => c === 'OK')).toHaveLength(1);
+    expect(codes.filter((c) => c === 'DRAFT_LIMIT_REACHED')).toHaveLength(4);
+  });
+
+  it('PR#11-3: abandoning a draft removes its photo rows and objects', async () => {
+    const userId = await newUser();
+    const s = await service.createDraft(userId);
+    const shoeId = (await service.addShoe(userId, s.id)).shoes[0].id;
+    await service.uploadPhoto(userId, s.id, shoeId, 'top', file(PNG), null);
+    await service.uploadPhoto(userId, s.id, shoeId, 'sole', file(JPG), null);
+    expect(
+      [...storage.objects.keys()].filter((k) => k.startsWith(`scans/${s.id}/`)),
+    ).toHaveLength(2);
+    await ds.query(
+      `UPDATE scans SET "updatedAt" = now() - interval '31 days' WHERE id = $1`,
+      [s.id],
+    );
+    await service.abandonStaleDrafts();
+    expect((await service.get(userId, s.id)).status).toBe('abandoned');
+    expect((await service.get(userId, s.id)).shoes[0].photos).toHaveLength(0);
+    expect(
+      [...storage.objects.keys()].filter((k) => k.startsWith(`scans/${s.id}/`)),
+    ).toHaveLength(0);
+  });
+
+  it('PR#11-3: deleteAllForUser removes scans and objects', async () => {
+    const userId = await newUser();
+    const s = await service.createDraft(userId);
+    const shoeId = (await service.addShoe(userId, s.id)).shoes[0].id;
+    await service.uploadPhoto(userId, s.id, shoeId, 'top', file(PNG), null);
+    expect(await service.deleteAllForUser(userId)).toBe(1);
+    expect(await code(service.get(userId, s.id))).toBe('SCAN_NOT_FOUND');
+    expect(
+      [...storage.objects.keys()].filter((k) => k.startsWith(`scans/${s.id}/`)),
+    ).toHaveLength(0);
+  });
+
   it('abandonStaleDrafts marks only idle drafts', async () => {
     const userId = await newUser();
     const stale = await service.createDraft(userId);

@@ -3,12 +3,18 @@
 // session state lock the scan row (SELECT … FOR UPDATE) so concurrent taps from
 // the same user cannot race positions, finish twice or edit after finish.
 //
-// Storage ordering:
-//   upload → S3 put first, then the DB row; a failed DB step deletes the new
-//            object again (compensation).
-//   delete → DB row first, then the S3 object after commit (best effort,
-//            behind SCAN_DELETE_OBJECTS_ON_REMOVE). A failed S3 delete is only
-//            logged; the abandoned-scan lifecycle rule is the backstop.
+// Storage ordering (PR #11 review):
+//   upload → every upload gets a UNIQUE key; the object is written to S3 before
+//            the short DB transaction, and the previous key (retake) is deleted
+//            only after commit. A failed DB step deletes the new object. No two
+//            requests ever share a key, so none can clobber another's object.
+//   delete → DB rows first, then S3 objects after commit. A failed S3 delete is
+//            only logged; abandon/purge sweeps are the backstop.
+//   album  → same: S3 first (no DB connection held), then one short transaction.
+//
+// Responses are built from data read INSIDE the transaction, so a committed
+// change can never be reported as a failure. URL signing problems degrade to
+// `url: null` instead of failing the request.
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -56,6 +62,12 @@ export interface UploadedPhoto {
 
 type ShoeWithPhotos = ScanShoeEntity & { photos: ScanPhotoEntity[] };
 
+/** What a locked-transaction body hands back. */
+interface TxResult {
+  /** S3 keys to delete once the transaction has committed. */
+  afterCommitDeletes: string[];
+}
+
 @Injectable()
 export class ScanService {
   private readonly logger = new Logger(ScanService.name);
@@ -74,21 +86,28 @@ export class ScanService {
   // ─── E1 create draft ──────────────────────────────────────────────────────
   async createDraft(userId: string): Promise<ScanSessionView> {
     this.requireStorage();
-    if (this.cfg.maxOpenDrafts > 0) {
-      const open = await this.scans.count({
-        where: { userId, status: 'draft' },
-      });
-      if (open >= this.cfg.maxOpenDrafts) {
-        throw new ApiError(
-          HttpStatus.CONFLICT,
-          'DRAFT_LIMIT_REACHED',
-          `You can have at most ${this.cfg.maxOpenDrafts} open scans`,
-        );
+    const scan = await this.dataSource.transaction(async (m) => {
+      if (this.cfg.maxOpenDrafts > 0) {
+        // Serialise count+insert per user so a double tap cannot exceed the
+        // limit. Transaction-scoped advisory lock: released on commit/rollback.
+        await m.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+          `scan-draft:${userId}`,
+        ]);
+        const open = await m.count(ScanEntity, {
+          where: { userId, status: 'draft' },
+        });
+        if (open >= this.cfg.maxOpenDrafts) {
+          throw new ApiError(
+            HttpStatus.CONFLICT,
+            'DRAFT_LIMIT_REACHED',
+            `You can have at most ${this.cfg.maxOpenDrafts} open scans`,
+          );
+        }
       }
-    }
-    const scan = await this.scans.save(
-      this.scans.create({ userId, status: 'draft', source: 'camera' }),
-    );
+      return m.save(
+        m.create(ScanEntity, { userId, status: 'draft', source: 'camera' }),
+      );
+    });
     this.logger.log(`scan ${scan.id} created`);
     return this.buildSession(scan, []);
   }
@@ -103,7 +122,8 @@ export class ScanService {
     const where = status ? { userId, status } : { userId };
     const [rows, total] = await this.scans.findAndCount({
       where,
-      order: { updatedAt: 'DESC' },
+      // `id` tiebreaker keeps pages stable when updatedAt values collide.
+      order: { updatedAt: 'DESC', id: 'DESC' },
       take: limit,
       skip: offset,
     });
@@ -137,11 +157,9 @@ export class ScanService {
   // ─── E3 get ───────────────────────────────────────────────────────────────
   async get(userId: string, scanId: string): Promise<ScanSessionView> {
     this.requireStorage();
-    const scan = await this.findOwned(this.dataSource.manager, userId, scanId);
-    return this.buildSession(
-      scan,
-      await this.loadShoes(this.dataSource.manager, [scan.id]),
-    );
+    const m = this.dataSource.manager;
+    const scan = await this.findOwned(m, userId, scanId);
+    return this.buildSession(scan, await this.loadShoes(m, [scan.id]));
   }
 
   // ─── E4 add shoe ──────────────────────────────────────────────────────────
@@ -163,7 +181,6 @@ export class ScanService {
         position: count + 1,
         status: 'capturing',
       });
-      await this.touch(m, scan.id);
       return { afterCommitDeletes: [] };
     });
   }
@@ -179,16 +196,19 @@ export class ScanService {
       const shoes = await this.loadShoes(m, [scan.id]);
       const target = shoes.find((s) => s.id === shoeId);
       if (!target) throw notFound('SHOE_NOT_FOUND', 'Shoe not found');
-      const keys = target.photos.map((p) => p.s3Key);
       await m.delete(ScanShoeEntity, { id: target.id });
       const remaining = orderByPosition(shoes.filter((s) => s.id !== shoeId));
       for (const [id, position] of renumber(remaining.map((s) => s.id))) {
         const before = remaining.find((s) => s.id === id)!.position;
-        if (before !== position)
+        if (before !== position) {
           await m.update(ScanShoeEntity, { id }, { position });
+        }
       }
-      await this.touch(m, scan.id);
-      return { afterCommitDeletes: keys };
+      return {
+        afterCommitDeletes: this.cfg.deleteObjectsOnRemove
+          ? target.photos.map((p) => p.s3Key)
+          : [],
+      };
     });
   }
 
@@ -212,60 +232,45 @@ export class ScanService {
     });
     if (!shoe) throw notFound('SHOE_NOT_FOUND', 'Shoe not found');
 
-    const key = scanPhotoKey(scan.id, shoe.id, view, type);
+    // Unique key per upload: a rejected or racing request can never replace
+    // the object a committed row points at.
+    const key = scanPhotoKey(scan.id, shoe.id, view, type, randomUUID());
     await this.putOrThrow(key, file!.buffer, CONTENT_TYPE[type]);
 
-    let oldKey: string | null = null;
     try {
-      const session = await this.inDraftTx(
-        userId,
-        scanId,
-        async (m, locked) => {
-          const stillThere = await m.findOne(ScanShoeEntity, {
-            where: { id: shoe.id, scanId: locked.id },
+      return await this.inDraftTx(userId, scanId, async (m, locked) => {
+        const stillThere = await m.findOne(ScanShoeEntity, {
+          where: { id: shoe.id, scanId: locked.id },
+        });
+        if (!stillThere) throw notFound('SHOE_NOT_FOUND', 'Shoe not found');
+        const existing = await m.findOne(ScanPhotoEntity, {
+          where: { scanShoeId: shoe.id, view },
+        });
+        const fields = {
+          s3Key: key,
+          contentType: CONTENT_TYPE[type],
+          bytes: file!.size,
+          takenAt,
+          uploadStatus: 'uploaded' as const,
+          width: null,
+          height: null,
+        };
+        if (existing) {
+          await m.update(ScanPhotoEntity, { id: existing.id }, fields);
+        } else {
+          await m.insert(ScanPhotoEntity, {
+            scanShoeId: shoe.id,
+            view,
+            ...fields,
           });
-          if (!stillThere) throw notFound('SHOE_NOT_FOUND', 'Shoe not found');
-          const existing = await m.findOne(ScanPhotoEntity, {
-            where: { scanShoeId: shoe.id, view },
-          });
-          oldKey = existing && existing.s3Key !== key ? existing.s3Key : null;
-          if (existing) {
-            await m.update(
-              ScanPhotoEntity,
-              { id: existing.id },
-              {
-                s3Key: key,
-                contentType: CONTENT_TYPE[type],
-                bytes: file!.size,
-                takenAt,
-                uploadStatus: 'uploaded',
-                width: null,
-                height: null,
-              },
-            );
-          } else {
-            await m.insert(ScanPhotoEntity, {
-              scanShoeId: shoe.id,
-              view,
-              s3Key: key,
-              contentType: CONTENT_TYPE[type],
-              bytes: file!.size,
-              takenAt,
-              uploadStatus: 'uploaded',
-            });
-          }
-          await this.refreshShoeStatus(m, shoe.id);
-          await this.touch(m, locked.id);
-          // A jpg → png retake leaves the old object under a different key.
-          return { afterCommitDeletes: oldKey ? [oldKey] : [] };
-        },
-      );
-      return session;
+        }
+        await this.refreshShoeStatus(m, shoe.id);
+        // The replaced object is always removed: it is unreachable now.
+        return { afterCommitDeletes: existing ? [existing.s3Key] : [] };
+      });
     } catch (err) {
-      // DB step failed: remove the object we just wrote, unless it replaced an
-      // existing one under the same key (a retake) — then it is the live photo.
-      const sameKeyRetake = await this.photoExistsWithKey(shoe.id, view, key);
-      if (!sameKeyRetake) await this.safeDelete(key);
+      // Nothing committed → the object we just wrote is an orphan.
+      await this.safeDelete(key);
       throw err;
     }
   }
@@ -286,12 +291,14 @@ export class ScanService {
       const photo = await m.findOne(ScanPhotoEntity, {
         where: { scanShoeId: shoe.id, view },
       });
-      if (!photo)
+      if (!photo) {
         throw notFound('PHOTO_NOT_FOUND', `No '${view}' photo for this shoe`);
+      }
       await m.delete(ScanPhotoEntity, { id: photo.id });
       await this.refreshShoeStatus(m, shoe.id);
-      await this.touch(m, scan.id);
-      return { afterCommitDeletes: [photo.s3Key] };
+      return {
+        afterCommitDeletes: this.cfg.deleteObjectsOnRemove ? [photo.s3Key] : [],
+      };
     });
   }
 
@@ -333,99 +340,136 @@ export class ScanService {
       ]),
     );
 
-    const uploaded: string[] = [];
+    // 1. Decide and upload WITHOUT holding a DB connection or the row lock.
+    const m0 = this.dataSource.manager;
+    const scan = await this.findOwned(m0, userId, scanId);
+    assertDraft(scan);
+    const current = await m0.count(ScanShoeEntity, {
+      where: { scanId: scan.id },
+    });
+    const decisions = decideAlbumShoes(
+      manifest,
+      info,
+      {
+        photoMaxBytes: this.cfg.photoMaxBytes,
+        allowedTypes: this.cfg.photoAllowedTypes,
+      },
+      this.cfg.maxShoes - current,
+    );
+
+    type Staged = {
+      ref: string;
+      shoeId: string;
+      files: { view: ShoeView; type: PhotoType; key: string; bytes: number }[];
+    };
     const results: AlbumShoeResult[] = [];
+    const staged: Staged[] = [];
+    const uploaded: string[] = [];
+    for (const d of decisions) {
+      if (!d.accepted) {
+        results.push({
+          ref: d.ref,
+          saved: false,
+          error: d.error,
+          detail: d.detail,
+        });
+        continue;
+      }
+      const shoeId = randomUUID();
+      const entry: Staged = { ref: d.ref, shoeId, files: [] };
+      try {
+        for (const f of d.files) {
+          const key = scanPhotoKey(
+            scan.id,
+            shoeId,
+            f.view,
+            f.type,
+            randomUUID(),
+          );
+          const part = byField.get(f.field)!;
+          await this.storage.put(key, part.buffer, CONTENT_TYPE[f.type]);
+          uploaded.push(key);
+          entry.files.push({
+            view: f.view,
+            type: f.type,
+            key,
+            bytes: part.size,
+          });
+        }
+        staged.push(entry);
+      } catch (err) {
+        this.logger.error(`album shoe ${d.ref} upload failed: ${String(err)}`);
+        for (const f of entry.files) await this.safeDelete(f.key);
+        results.push({
+          ref: d.ref,
+          saved: false,
+          error: 'STORAGE_UNAVAILABLE',
+          detail: 'photo storage failed, try again',
+        });
+      }
+    }
+
+    // 2. One short transaction for the rows. Capacity is re-checked under the
+    //    lock; shoes that no longer fit are reported, their objects removed.
     let session: ScanSessionView;
     try {
-      session = await this.inDraftTx(userId, scanId, async (m, scan) => {
-        const current = await m.count(ScanShoeEntity, {
-          where: { scanId: scan.id },
+      session = await this.inDraftTx(userId, scanId, async (m, locked) => {
+        let position = await m.count(ScanShoeEntity, {
+          where: { scanId: locked.id },
         });
-        const decisions = decideAlbumShoes(
-          manifest,
-          info,
-          {
-            photoMaxBytes: this.cfg.photoMaxBytes,
-            allowedTypes: this.cfg.photoAllowedTypes,
-          },
-          this.cfg.maxShoes - current,
-        );
-        let position = current;
-        for (const d of decisions) {
-          if (!d.accepted) {
+        const dropKeys: string[] = [];
+        for (const s of staged) {
+          if (position >= this.cfg.maxShoes) {
+            dropKeys.push(...s.files.map((f) => f.key));
             results.push({
-              ref: d.ref,
+              ref: s.ref,
               saved: false,
-              error: d.error,
-              detail: d.detail,
-            });
-            continue;
-          }
-          const shoeId = randomUUID();
-          const keys: string[] = [];
-          try {
-            for (const f of d.files) {
-              const key = scanPhotoKey(scan.id, shoeId, f.view, f.type);
-              await this.storage.put(
-                key,
-                byField.get(f.field)!.buffer,
-                CONTENT_TYPE[f.type],
-              );
-              keys.push(key);
-              uploaded.push(key);
-            }
-          } catch (err) {
-            this.logger.error(
-              `album shoe ${d.ref} upload failed: ${String(err)}`,
-            );
-            for (const k of keys) await this.safeDelete(k);
-            results.push({
-              ref: d.ref,
-              saved: false,
-              error: 'STORAGE_UNAVAILABLE',
-              detail: 'photo storage failed, try again',
+              error: 'SHOE_LIMIT_REACHED',
+              detail: 'session is full',
             });
             continue;
           }
           position += 1;
           await m.insert(ScanShoeEntity, {
-            id: shoeId,
-            scanId: scan.id,
+            id: s.shoeId,
+            scanId: locked.id,
             position,
             status: 'capturing',
           });
           await m.insert(
             ScanPhotoEntity,
-            d.files.map((f, i) => ({
-              scanShoeId: shoeId,
+            s.files.map((f) => ({
+              scanShoeId: s.shoeId,
               view: f.view,
-              s3Key: keys[i],
+              s3Key: f.key,
               contentType: CONTENT_TYPE[f.type],
-              bytes: byField.get(f.field)!.size,
+              bytes: f.bytes,
               uploadStatus: 'uploaded' as const,
             })),
           );
-          await this.refreshShoeStatus(m, shoeId);
-          const state = computeShoeState(d.files.map((f) => f.view));
+          await this.refreshShoeStatus(m, s.shoeId);
+          const state = computeShoeState(s.files.map((f) => f.view));
           results.push({
-            ref: d.ref,
+            ref: s.ref,
             saved: true,
-            shoeId,
+            shoeId: s.shoeId,
             label: labelFor(position),
             complete: state.complete,
             missing: state.missing,
           });
         }
         if (results.some((r) => r.saved)) {
-          await m.update(ScanEntity, { id: scan.id }, { source: 'album' });
+          await m.update(ScanEntity, { id: locked.id }, { source: 'album' });
         }
-        await this.touch(m, scan.id);
-        return { afterCommitDeletes: [] };
+        return { afterCommitDeletes: dropKeys };
       });
     } catch (err) {
       for (const k of uploaded) await this.safeDelete(k);
       throw err;
     }
+    // Keep manifest order in the response.
+    const order = new Map(manifest.map((s, i) => [s.ref, i]));
+    results.sort((a, b) => (order.get(a.ref) ?? 0) - (order.get(b.ref) ?? 0));
     return { session, results };
   }
 
@@ -466,47 +510,115 @@ export class ScanService {
     });
   }
 
-  // ─── abandon job ─────────────────────────────────────────────────────────
-  /** Marks drafts idle for SCAN_DRAFT_ABANDON_DAYS as abandoned. Idempotent. */
+  // ─── sweeps ──────────────────────────────────────────────────────────────
+  /**
+   * Marks drafts idle for SCAN_DRAFT_ABANDON_DAYS as abandoned and removes
+   * their photos (rows + objects). Idempotent; safe to run on many containers.
+   */
   async abandonStaleDrafts(now = new Date()): Promise<number> {
     const cutoff = new Date(
       now.getTime() - this.cfg.draftAbandonDays * 86_400_000,
     );
-    const res = await this.scans
-      .createQueryBuilder()
-      .update(ScanEntity)
-      .set({ status: 'abandoned' })
-      .where('status = :draft', { draft: 'draft' })
-      .andWhere('"updatedAt" < :cutoff', { cutoff })
-      .execute();
-    return res.affected ?? 0;
+    const stale = await this.scans
+      .createQueryBuilder('scan')
+      .select('scan.id')
+      .where('scan.status = :draft', { draft: 'draft' })
+      .andWhere('scan."updatedAt" < :cutoff', { cutoff })
+      .getMany();
+    let n = 0;
+    for (const { id } of stale) {
+      const keys = await this.dataSource.transaction(async (m) => {
+        // Re-check under lock: the user may have resumed it meanwhile.
+        const res = await m
+          .createQueryBuilder()
+          .update(ScanEntity)
+          .set({ status: 'abandoned' })
+          .where('id = :id AND status = :draft AND "updatedAt" < :cutoff', {
+            id,
+            draft: 'draft',
+            cutoff,
+          })
+          .execute();
+        if (!res.affected) return null;
+        return this.purgePhotosInTx(m, id);
+      });
+      if (keys === null) continue;
+      for (const k of keys) await this.safeDelete(k);
+      n += 1;
+    }
+    return n;
+  }
+
+  /**
+   * Removes every scan of a user together with its S3 objects. Must be called
+   * by any future account-deletion flow BEFORE the users row is deleted —
+   * the FK cascade alone would leave the objects behind.
+   */
+  async deleteAllForUser(userId: string): Promise<number> {
+    const keys: string[] = [];
+    const n = await this.dataSource.transaction(async (m) => {
+      const scans = await m.find(ScanEntity, {
+        where: { userId },
+        select: { id: true },
+      });
+      for (const s of scans)
+        keys.push(...(await this.purgePhotosInTx(m, s.id)));
+      if (scans.length) await m.delete(ScanEntity, { userId });
+      return scans.length;
+    });
+    for (const k of keys) await this.safeDelete(k);
+    return n;
   }
 
   // ─── internals ───────────────────────────────────────────────────────────
 
   /**
-   * Runs `work` in a transaction holding a row lock on the caller's draft scan,
-   * then (after commit) deletes the returned S3 keys and returns the fresh view.
+   * Runs `work` in a transaction holding a row lock on the caller's draft
+   * scan, builds the response from data read inside that transaction, then
+   * (after commit) deletes the returned S3 keys. The response can no longer
+   * fail after the commit: URL signing errors degrade to `url: null`.
    */
   private async inDraftTx(
     userId: string,
     scanId: string,
-    work: (
-      m: EntityManager,
-      scan: ScanEntity,
-    ) => Promise<{ afterCommitDeletes: string[] }>,
+    work: (m: EntityManager, scan: ScanEntity) => Promise<TxResult>,
   ): Promise<ScanSessionView> {
-    const { afterCommitDeletes } = await this.dataSource.transaction(
+    const { view, afterCommitDeletes } = await this.dataSource.transaction(
       async (m) => {
         const scan = await this.findOwned(m, userId, scanId, true);
         assertDraft(scan);
-        return work(m, scan);
+        const result = await work(m, scan);
+        await this.touch(m, scan.id);
+        const fresh = await this.findOwned(m, userId, scanId);
+        const view = await this.buildSession(
+          fresh,
+          await this.loadShoes(m, [scan.id]),
+        );
+        return { view, afterCommitDeletes: result.afterCommitDeletes };
       },
     );
-    if (this.cfg.deleteObjectsOnRemove) {
-      for (const key of afterCommitDeletes) await this.safeDelete(key);
+    for (const key of afterCommitDeletes) await this.safeDelete(key);
+    return view;
+  }
+
+  /** Deletes a scan's photo rows inside `m` and returns their S3 keys. */
+  private async purgePhotosInTx(
+    m: EntityManager,
+    scanId: string,
+  ): Promise<string[]> {
+    const photos = await m
+      .getRepository(ScanPhotoEntity)
+      .createQueryBuilder('p')
+      .innerJoin('p.shoe', 's')
+      .where('s.scanId = :scanId', { scanId })
+      .getMany();
+    if (photos.length) {
+      await m.delete(
+        ScanPhotoEntity,
+        photos.map((p) => p.id),
+      );
     }
-    return this.get(userId, scanId);
+    return photos.map((p) => p.s3Key);
   }
 
   private async findOwned(
@@ -581,7 +693,7 @@ export class ScanService {
               bytes: p.bytes,
               takenAt: p.takenAt ? new Date(p.takenAt).toISOString() : null,
               updatedAt: new Date(p.updatedAt).toISOString(),
-              url: await this.storage.signedGetUrl(p.s3Key, ttl),
+              url: await this.signOrNull(p.s3Key, ttl),
             })),
         );
         return {
@@ -610,6 +722,16 @@ export class ScanService {
         shoeViews.every((s) => s.complete),
       shoes: shoeViews,
     };
+  }
+
+  /** A signing failure must never turn a saved change into an error. */
+  private async signOrNull(key: string, ttl: number): Promise<string | null> {
+    try {
+      return await this.storage.signedGetUrl(key, ttl);
+    } catch (err) {
+      this.logger.warn(`could not sign ${key}: ${String(err)}`);
+      return null;
+    }
   }
 
   private validatePhoto(file: UploadedPhoto | undefined): PhotoType {
@@ -669,21 +791,6 @@ export class ScanService {
         'STORAGE_UNAVAILABLE',
         'Photo storage failed, try again',
       );
-    }
-  }
-
-  private async photoExistsWithKey(
-    shoeId: string,
-    view: ShoeView,
-    key: string,
-  ): Promise<boolean> {
-    try {
-      const row = await this.dataSource.manager.findOne(ScanPhotoEntity, {
-        where: { scanShoeId: shoeId, view },
-      });
-      return row?.s3Key === key;
-    } catch {
-      return true; // cannot tell — keep the object rather than risk deleting a live photo
     }
   }
 

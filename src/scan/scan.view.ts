@@ -13,8 +13,8 @@ export interface ScanPhotoView {
   bytes: number | null;
   takenAt: string | null;
   updatedAt: string;
-  /** Short-lived signed GET URL (SCAN_PHOTO_URL_TTL_SECONDS). */
-  url: string;
+  /** Short-lived signed GET URL (SCAN_PHOTO_URL_TTL_SECONDS); null if signing failed. */
+  url: string | null;
 }
 
 export interface ScanShoeView {
