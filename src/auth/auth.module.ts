@@ -42,5 +42,7 @@ import { UserModule } from '../user/user.module';
     FacebookTokenVerifier,
     AppleTokenVerifier,
   ],
+  // Exported so other feature modules (e.g. ScanModule) can use JwtAuthGuard.
+  exports: [JwtModule, JwtAuthGuard],
 })
 export class AuthModule {}
