@@ -23,6 +23,10 @@ export interface ScanConfig {
   draftAbandonDays: number;
   /** Lifetime of the signed thumbnail URLs in session responses. */
   photoUrlTtlSeconds: number;
+  /** Max ranked candidates kept with one identification result (F2: "top-3"). */
+  resultMaxCandidates: number;
+  /** Max serialized bytes of the `raw` ShoeDNA passthrough blob (F2). */
+  resultRawMaxBytes: number;
 }
 
 export default registerAs(
@@ -42,6 +46,14 @@ export default registerAs(
     photoUrlTtlSeconds: parsePositiveInt(
       process.env.SCAN_PHOTO_URL_TTL_SECONDS,
       900,
+    ),
+    resultMaxCandidates: parsePositiveInt(
+      process.env.SCAN_RESULT_MAX_CANDIDATES,
+      3,
+    ),
+    resultRawMaxBytes: parsePositiveInt(
+      process.env.SCAN_RESULT_RAW_MAX_BYTES,
+      8192,
     ),
   }),
 );

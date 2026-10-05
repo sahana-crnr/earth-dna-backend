@@ -44,6 +44,13 @@ import {
   type AlbumFileInfo,
   type AlbumManifestShoe,
 } from './scan-rules';
+import {
+  findOwnedScan,
+  loadShoes,
+  notFound,
+  touchScan,
+  type ShoeWithPhotos,
+} from './scan-access';
 import type { ScanStatus, ShoeView } from './scan.types';
 import type {
   AlbumBatchView,
@@ -59,8 +66,6 @@ export interface UploadedPhoto {
   buffer: Buffer;
   size: number;
 }
-
-type ShoeWithPhotos = ScanShoeEntity & { photos: ScanPhotoEntity[] };
 
 /** What a locked-transaction body hands back. */
 interface TxResult {
@@ -128,7 +133,7 @@ export class ScanService {
       skip: offset,
     });
     const shoes = rows.length
-      ? await this.loadShoes(
+      ? await loadShoes(
           this.dataSource.manager,
           rows.map((r) => r.id),
         )
@@ -158,8 +163,8 @@ export class ScanService {
   async get(userId: string, scanId: string): Promise<ScanSessionView> {
     this.requireStorage();
     const m = this.dataSource.manager;
-    const scan = await this.findOwned(m, userId, scanId);
-    return this.buildSession(scan, await this.loadShoes(m, [scan.id]));
+    const scan = await findOwnedScan(m, userId, scanId);
+    return this.buildSession(scan, await loadShoes(m, [scan.id]));
   }
 
   // ─── E4 add shoe ──────────────────────────────────────────────────────────
@@ -193,7 +198,7 @@ export class ScanService {
   ): Promise<ScanSessionView> {
     this.requireStorage();
     return this.inDraftTx(userId, scanId, async (m, scan) => {
-      const shoes = await this.loadShoes(m, [scan.id]);
+      const shoes = await loadShoes(m, [scan.id]);
       const target = shoes.find((s) => s.id === shoeId);
       if (!target) throw notFound('SHOE_NOT_FOUND', 'Shoe not found');
       await m.delete(ScanShoeEntity, { id: target.id });
@@ -225,7 +230,7 @@ export class ScanService {
     const type = this.validatePhoto(file);
 
     // Cheap pre-checks without a lock, so a bad request never touches S3.
-    const scan = await this.findOwned(this.dataSource.manager, userId, scanId);
+    const scan = await findOwnedScan(this.dataSource.manager, userId, scanId);
     assertDraft(scan);
     const shoe = await this.dataSource.manager.findOne(ScanShoeEntity, {
       where: { id: shoeId, scanId: scan.id },
@@ -342,7 +347,7 @@ export class ScanService {
 
     // 1. Decide and upload WITHOUT holding a DB connection or the row lock.
     const m0 = this.dataSource.manager;
-    const scan = await this.findOwned(m0, userId, scanId);
+    const scan = await findOwnedScan(m0, userId, scanId);
     assertDraft(scan);
     const current = await m0.count(ScanShoeEntity, {
       where: { scanId: scan.id },
@@ -477,7 +482,7 @@ export class ScanService {
   async finish(userId: string, scanId: string): Promise<ScanSessionView> {
     this.requireStorage();
     return this.inDraftTx(userId, scanId, async (m, scan) => {
-      const shoes = await this.loadShoes(m, [scan.id]);
+      const shoes = await loadShoes(m, [scan.id]);
       if (shoes.length === 0) {
         throw new ApiError(
           HttpStatus.CONFLICT,
@@ -585,14 +590,14 @@ export class ScanService {
   ): Promise<ScanSessionView> {
     const { view, afterCommitDeletes } = await this.dataSource.transaction(
       async (m) => {
-        const scan = await this.findOwned(m, userId, scanId, true);
+        const scan = await findOwnedScan(m, userId, scanId, true);
         assertDraft(scan);
         const result = await work(m, scan);
-        await this.touch(m, scan.id);
-        const fresh = await this.findOwned(m, userId, scanId);
+        await touchScan(m, scan.id);
+        const fresh = await findOwnedScan(m, userId, scanId);
         const view = await this.buildSession(
           fresh,
-          await this.loadShoes(m, [scan.id]),
+          await loadShoes(m, [scan.id]),
         );
         return { view, afterCommitDeletes: result.afterCommitDeletes };
       },
@@ -621,36 +626,6 @@ export class ScanService {
     return photos.map((p) => p.s3Key);
   }
 
-  private async findOwned(
-    m: EntityManager,
-    userId: string,
-    scanId: string,
-    lock = false,
-  ): Promise<ScanEntity> {
-    const qb = m
-      .getRepository(ScanEntity)
-      .createQueryBuilder('scan')
-      .where('scan.id = :scanId AND scan.userId = :userId', { scanId, userId });
-    if (lock) qb.setLock('pessimistic_write');
-    const scan = await qb.getOne();
-    if (!scan) throw notFound('SCAN_NOT_FOUND', 'Scan not found');
-    return scan;
-  }
-
-  private async loadShoes(
-    m: EntityManager,
-    scanIds: string[],
-  ): Promise<ShoeWithPhotos[]> {
-    const shoes = await m
-      .getRepository(ScanShoeEntity)
-      .createQueryBuilder('shoe')
-      .leftJoinAndSelect('shoe.photos', 'photo')
-      .where('shoe.scanId IN (:...scanIds)', { scanIds })
-      .orderBy('shoe.position', 'ASC')
-      .getMany();
-    return shoes.map((s) => ({ ...s, photos: s.photos ?? [] }));
-  }
-
   private async refreshShoeStatus(
     m: EntityManager,
     shoeId: string,
@@ -665,15 +640,6 @@ export class ScanService {
       { id: shoeId },
       { status: complete ? 'complete' : 'capturing' },
     );
-  }
-
-  private async touch(m: EntityManager, scanId: string): Promise<void> {
-    await m
-      .createQueryBuilder()
-      .update(ScanEntity)
-      .set({ updatedAt: () => 'now()' })
-      .where('id = :scanId', { scanId })
-      .execute();
   }
 
   private async buildSession(
@@ -811,10 +777,6 @@ function assertDraft(scan: ScanEntity): void {
       `Scan is ${scan.status}; it can no longer be changed`,
     );
   }
-}
-
-function notFound(code: string, message: string): ApiError {
-  return new ApiError(HttpStatus.NOT_FOUND, code, message);
 }
 
 function viewIndex(v: ShoeView): number {
