@@ -414,6 +414,25 @@ d('ScanResultService (integration, real Postgres)', () => {
     expect(after.allResolved).toBe(true);
   });
 
+  // E11 is polled every couple of seconds; `raw` is up to 8 KB per shoe, so it
+  // is opt-in there while E10 always returns it.
+  it('GET results omits raw unless asked, E10 always returns it', async () => {
+    const userId = await newUser();
+    const { scanId, shoeIds } = await finishedScan(userId, 1);
+
+    const submitted = await results.submit(userId, scanId, shoeIds[0], RESULT);
+    expect(submitted.result.raw).toEqual({ embeddingVersion: 'v3' });
+
+    const polled = await results.results(userId, scanId);
+    expect(polled.shoes[0].result).not.toHaveProperty('raw');
+    // everything the processing screen actually renders is still there
+    expect(polled.shoes[0].result?.brand).toBe('Nike');
+    expect(polled.shoes[0].result?.matchPercent).toBe(92);
+
+    const withRaw = await results.results(userId, scanId, true);
+    expect(withRaw.shoes[0].result?.raw).toEqual({ embeddingVersion: 'v3' });
+  });
+
   it('GET results on a scan with no shoes is not "resolved"', async () => {
     const userId = await newUser();
     const s = await scans.createDraft(userId);

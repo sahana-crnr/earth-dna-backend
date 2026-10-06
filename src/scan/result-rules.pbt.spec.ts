@@ -10,12 +10,12 @@ import {
   matchPercent,
   normalizeCandidates,
   resultStatusFor,
+  roundConfidence,
 } from './result-rules';
 import {
   CONDITION_CODES,
   IDENTIFICATION_OUTCOMES,
   RESULT_STATUSES,
-  SCAN_SHOE_STATUSES,
 } from './scan.types';
 import {
   candidatesArb,
@@ -25,7 +25,6 @@ import {
   nestedBlob,
   outcomeArb,
   rawBlobArb,
-  shoeStatusArb,
 } from './__generators__/result.generators';
 
 describe('F2-P1 conditionLabelFor', () => {
@@ -91,39 +90,28 @@ describe('F2-P2 matchPercent', () => {
 });
 
 describe('F2-P3 resultStatusFor', () => {
-  it('is total over ScanShoeStatus x outcome, and a stored outcome always wins', () => {
+  it('is total over outcome, and a stored outcome always wins', () => {
     fc.assert(
-      fc.property(
-        shoeStatusArb,
-        fc.option(outcomeArb, { nil: null }),
-        (shoe, outcome) => {
-          const status = resultStatusFor(shoe, outcome);
-          expect(RESULT_STATUSES).toContain(status);
-          if (outcome !== null) expect(status).toBe(outcome);
-        },
-      ),
+      fc.property(fc.option(outcomeArb, { nil: null }), (outcome) => {
+        const status = resultStatusFor(outcome);
+        expect(RESULT_STATUSES).toContain(status);
+        if (outcome !== null) expect(status).toBe(outcome);
+      }),
     );
   });
 
-  it('reports waiting until a result arrives, analyzing while in flight', () => {
-    expect(resultStatusFor('complete', null)).toBe('waiting');
-    expect(resultStatusFor('capturing', null)).toBe('waiting');
-    expect(resultStatusFor('analyzing', null)).toBe('analyzing');
-    expect(resultStatusFor('identified', 'identified')).toBe('identified');
-    expect(resultStatusFor('failed', 'failed')).toBe('failed');
+  // The shoe row is deliberately not consulted: identification runs on the
+  // device, so `waiting` is the only thing the server can say until a result
+  // lands, and after F3 the row reads confirmed/rejected regardless.
+  it('reports waiting until a result arrives', () => {
+    expect(resultStatusFor(null)).toBe('waiting');
+    expect(resultStatusFor('identified')).toBe('identified');
+    expect(resultStatusFor('failed')).toBe('failed');
   });
 
-  it('survives F3: a confirmed shoe still reports how identification went', () => {
-    expect(resultStatusFor('confirmed', 'identified')).toBe('identified');
-    expect(resultStatusFor('rejected', 'identified')).toBe('identified');
-    expect(resultStatusFor('rejected', 'failed')).toBe('failed');
-  });
-
-  it('every shoe status maps to a known result status', () => {
-    for (const s of SCAN_SHOE_STATUSES) {
-      for (const o of [null, ...IDENTIFICATION_OUTCOMES] as const) {
-        expect(RESULT_STATUSES).toContain(resultStatusFor(s, o));
-      }
+  it('every outcome maps to a known result status', () => {
+    for (const o of [null, ...IDENTIFICATION_OUTCOMES] as const) {
+      expect(RESULT_STATUSES).toContain(resultStatusFor(o));
     }
   });
 });
@@ -139,8 +127,30 @@ describe('F2-P4 normalizeCandidates', () => {
         expect(d.candidates).toHaveLength(raw.length);
         const confs = d.candidates.map((c) => c.confidence);
         expect([...confs].sort((a, b) => b - a)).toEqual(confs);
-        // nothing invented: same multiset of confidences
-        expect([...confs].sort()).toEqual(raw.map((c) => c.confidence).sort());
+        // nothing invented: same multiset of confidences, at stored precision
+        expect([...confs].sort()).toEqual(
+          raw.map((c) => roundConfidence(c.confidence)).sort(),
+        );
+      }),
+    );
+  });
+
+  // The column is numeric(5,4) but candidates live in jsonb, which would
+  // otherwise keep every digit the client sent — one response, two precisions.
+  it('stores candidate confidences at the precision of the confidence column', () => {
+    const d = normalizeCandidates(
+      [{ brand: 'Nike', model: 'Air Max 90', confidence: 0.92345678 }],
+      MAX,
+    );
+    expect(d.ok && d.candidates[0].confidence).toBe(0.9235);
+  });
+
+  it('never rounds a valid confidence out of range', () => {
+    fc.assert(
+      fc.property(confidenceArb, (c) => {
+        const r = roundConfidence(c);
+        expect(r).toBeGreaterThanOrEqual(0);
+        expect(r).toBeLessThanOrEqual(1);
       }),
     );
   });

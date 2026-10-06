@@ -11,6 +11,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   Res,
   UseFilters,
   UseGuards,
@@ -25,6 +26,7 @@ import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ResultsQueryDto } from './dto/results-query.dto';
 import { SubmitShoeResultDto } from './dto/submit-shoe-result.dto';
 import { ScanHttpErrorFilter } from './scan-http-error.filter';
 import { ScanResultService } from './scan-result.service';
@@ -93,12 +95,15 @@ export class ScanResultController {
   @Throttle({ default: { limit: 120, ttl: 60000 } })
   @ApiOperation({
     summary:
-      'E11 — per-shoe identification status and stored result (waiting / analyzing / identified / failed)',
+      'E11 — per-shoe identification status and stored result (waiting / identified / failed)',
+    description:
+      'Polled by the "Scan processing" screen until allResolved. The verbatim ShoeDNA `raw` blob is omitted unless ?include=raw, so a poll stays small.',
   })
   getResults(
     @CurrentUser('sub') userId: string,
     @Param('scanId', uuid) scanId: string,
+    @Query() query: ResultsQueryDto,
   ): Promise<ScanResultsView> {
-    return this.results.results(userId, scanId);
+    return this.results.results(userId, scanId, query.include === 'raw');
   }
 }

@@ -54,10 +54,5 @@ export const IDENTIFICATION_OUTCOMES = ['identified', 'failed'] as const;
 export type IdentificationOutcome = (typeof IDENTIFICATION_OUTCOMES)[number];
 
 /** Per-shoe state the "Scan processing" screen renders. */
-export const RESULT_STATUSES = [
-  'waiting',
-  'analyzing',
-  'identified',
-  'failed',
-] as const;
+export const RESULT_STATUSES = ['waiting', 'identified', 'failed'] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];

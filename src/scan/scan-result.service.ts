@@ -138,15 +138,21 @@ export class ScanResultService {
         shoeId: shoe.id,
         label: labelFor(shoe.position),
         replaced: existing !== null,
-        status: resultStatusFor(outcome, outcome),
-        result: toResultView(saved),
+        status: resultStatusFor(outcome),
+        result: toResultView(saved, true),
         scanStatus,
       };
     });
   }
 
   // ─── E11 per-shoe results ────────────────────────────────────────────────
-  async results(userId: string, scanId: string): Promise<ScanResultsView> {
+  // includeRaw is off by default: this route is polled every couple of seconds
+  // until allResolved, and `raw` is up to SCAN_RESULT_RAW_MAX_BYTES per shoe.
+  async results(
+    userId: string,
+    scanId: string,
+    includeRaw = false,
+  ): Promise<ScanResultsView> {
     const m = this.dataSource.manager;
     const scan = await findOwnedScan(m, userId, scanId);
     const shoes = await m.find(ScanShoeEntity, {
@@ -166,8 +172,8 @@ export class ScanResultService {
         shoeId: s.id,
         position: s.position,
         label: labelFor(s.position),
-        status: resultStatusFor(s.status, row?.outcome ?? null),
-        result: row ? toResultView(row) : null,
+        status: resultStatusFor(row?.outcome ?? null),
+        result: row ? toResultView(row, includeRaw) : null,
       };
     });
     return {
@@ -263,8 +269,13 @@ export class ScanResultService {
   }
 }
 
-/** Entity → response. The label and matchPercent are derived, never stored. */
-function toResultView(row: ScanShoeResultEntity): ShoeResultView {
+/** Entity → response. The label and matchPercent are derived, never stored.
+ *  `raw` is spread in only when asked for, so the key is absent rather than
+ *  null when it was simply not requested. */
+function toResultView(
+  row: ScanShoeResultEntity,
+  includeRaw: boolean,
+): ShoeResultView {
   return {
     source: row.source,
     outcome: row.outcome,
@@ -280,7 +291,7 @@ function toResultView(row: ScanShoeResultEntity): ShoeResultView {
       label: conditionLabelFor(row.conditionCode),
     },
     candidates: row.candidates ?? [],
-    raw: row.raw,
+    ...(includeRaw ? { raw: row.raw } : {}),
     submittedAt: new Date(row.submittedAt).toISOString(),
     updatedAt: new Date(row.updatedAt).toISOString(),
   };

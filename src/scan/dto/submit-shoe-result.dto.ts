@@ -144,6 +144,9 @@ export class SubmitShoeResultDto {
     example: '2026-10-05T10:15:00.000Z',
     description: 'When the device produced the result. Defaults to now.',
   })
+  // Stays a string: the global ValidationPipe runs with enableImplicitConversion,
+  // so a `Date` here would be converted before validation and @IsISO8601 — which
+  // only ever accepts a string — would reject every value the app sends.
   @IsOptional()
   @IsISO8601({ strict: true })
   submittedAt?: string;

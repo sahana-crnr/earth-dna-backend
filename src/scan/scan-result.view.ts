@@ -29,7 +29,9 @@ export interface ShoeResultView {
   /** `label` is PROVISIONAL; only `code` is stored (plan §8, open point 7). */
   condition: { code: ConditionCode | null; label: string | null };
   candidates: ResultCandidateView[];
-  raw: Record<string, unknown> | null;
+  /** Omitted entirely unless asked for: always present on E10, on E11 only with
+   *  ?include=raw. Absent means "not requested", `null` means "none stored". */
+  raw?: Record<string, unknown> | null;
   submittedAt: string;
   updatedAt: string;
 }

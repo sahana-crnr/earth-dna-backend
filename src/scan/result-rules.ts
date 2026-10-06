@@ -6,7 +6,6 @@ import {
   type ConditionCode,
   type IdentificationOutcome,
   type ResultStatus,
-  type ScanShoeStatus,
 } from './scan.types';
 
 // ─── F2-P1: condition labels ─────────────────────────────────────────────────
@@ -58,13 +57,13 @@ export function matchPercent(confidence: number | null): number | null {
  * A stored result always wins: after F3 the shoe row reads `confirmed` or
  * `rejected`, which says nothing about whether identification succeeded, so the
  * outcome recorded on the result row is what the processing screen reports.
+ * Without a result there is nothing to report but `waiting` — identification
+ * runs on the device, so the server never observes an in-flight attempt.
  */
 export function resultStatusFor(
-  shoe: ScanShoeStatus,
   outcome: IdentificationOutcome | null,
 ): ResultStatus {
-  if (outcome !== null) return outcome;
-  return shoe === 'analyzing' ? 'analyzing' : 'waiting';
+  return outcome ?? 'waiting';
 }
 
 // ─── F2-P4: candidate list ───────────────────────────────────────────────────
@@ -97,6 +96,16 @@ function candidateName(c: { brand: string; model?: string | null }): string {
   return c.model ? `${c.brand} ${c.model}` : c.brand;
 }
 
+/** Decimal places of the `confidence` numeric(5,4) column. */
+export const CONFIDENCE_DP = 4;
+
+/** Half-up to CONFIDENCE_DP, so a candidate reads back the way the top-level
+ *  confidence does after its round trip through Postgres. */
+export function roundConfidence(confidence: number): number {
+  const scale = 10 ** CONFIDENCE_DP;
+  return Math.round(confidence * scale) / scale;
+}
+
 /**
  * Validates and canonically orders the ranked candidates (plan §4 F2: "top-3").
  *
@@ -106,6 +115,14 @@ function candidateName(c: { brand: string; model?: string | null }): string {
  * result depends only on the SET of candidates and never on the order they were
  * sent in — two clients submitting the same three candidates store identical
  * rows, which is what makes a retry a true no-op.
+ *
+ * Confidences are rounded to CONFIDENCE_DP first, matching the numeric(5,4)
+ * column the top-level `confidence` lands in: the candidates live in jsonb,
+ * which would otherwise keep every digit the client sent and put two different
+ * precisions in one response. Rounding happens BEFORE the sort so the ordering
+ * is a function of the stored values — sorting on raw confidences could order
+ * two candidates that round to the same number by a difference the response
+ * never shows.
  */
 export function normalizeCandidates(
   raw: readonly { brand: string; model?: string | null; confidence: number }[],
@@ -147,7 +164,7 @@ export function normalizeCandidates(
     .map((c) => ({
       brand: c.brand,
       model: c.model ?? null,
-      confidence: c.confidence,
+      confidence: roundConfidence(c.confidence),
     }))
     .sort(
       (a, b) =>
