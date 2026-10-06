@@ -139,6 +139,8 @@ export class ScanResultService {
         label: labelFor(shoe.position),
         replaced: existing !== null,
         status: resultStatusFor(outcome),
+        // E10 returns the single submitted result with raw payload included so the
+        // caller can inspect the original model output immediately.
         result: toResultView(saved, true),
         scanStatus,
       };
@@ -146,8 +148,8 @@ export class ScanResultService {
   }
 
   // ─── E11 per-shoe results ────────────────────────────────────────────────
-  // includeRaw is off by default: this route is polled every couple of seconds
-  // until allResolved, and `raw` is up to SCAN_RESULT_RAW_MAX_BYTES per shoe.
+  // E11 is polled roughly every 2s while processing; raw payloads are large and
+  // should not be returned unless the caller explicitly asks for them.
   async results(
     userId: string,
     scanId: string,
@@ -159,6 +161,7 @@ export class ScanResultService {
       where: { scanId: scan.id },
       order: { position: 'ASC' },
     });
+    const wantsRaw = includeRaw === true;
     const rows = shoes.length
       ? await m.find(ScanShoeResultEntity, {
           where: { scanShoeId: In(shoes.map((s) => s.id)) },
@@ -173,7 +176,7 @@ export class ScanResultService {
         position: s.position,
         label: labelFor(s.position),
         status: resultStatusFor(row?.outcome ?? null),
-        result: row ? toResultView(row, includeRaw) : null,
+        result: row ? toResultView(row, wantsRaw) : null,
       };
     });
     return {
