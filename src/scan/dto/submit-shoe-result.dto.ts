@@ -2,16 +2,16 @@
 // the configurable caps (SCAN_RESULT_*) are enforced in the service, the same
 // split as album-batch.dto.ts.
 //
-// `source` is deliberately absent: the endpoint is the on-device submit route
-// and the service records source='device' itself, so a client cannot claim to
-// be the server-side ShoeDNA endpoint.
+// `source` and `submittedAt` are deliberately absent. The service records
+// source='device' itself, so a client cannot claim to be the server-side
+// ShoeDNA endpoint; and it stamps submittedAt with the server clock, so the
+// timestamp cannot be skewed or back-dated by a device.
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
   IsIn,
-  IsISO8601,
   IsNumber,
   IsObject,
   IsOptional,
@@ -139,15 +139,4 @@ export class SubmitShoeResultDto {
   @IsOptional()
   @IsObject()
   raw?: Record<string, unknown>;
-
-  @ApiPropertyOptional({
-    example: '2026-10-05T10:15:00.000Z',
-    description: 'When the device produced the result. Defaults to now.',
-  })
-  // Stays a string: the global ValidationPipe runs with enableImplicitConversion,
-  // so a `Date` here would be converted before validation and @IsISO8601 — which
-  // only ever accepts a string — would reject every value the app sends.
-  @IsOptional()
-  @IsISO8601({ strict: true })
-  submittedAt?: string;
 }

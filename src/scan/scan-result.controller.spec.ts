@@ -48,7 +48,6 @@ const VALID = {
     { brand: 'Adidas', confidence: 0.0256 },
   ],
   raw: { embeddingVersion: 'v3' },
-  submittedAt: '2026-10-05T10:15:00.000Z',
 };
 
 describe('ScanResultController wiring', () => {
@@ -103,6 +102,12 @@ describe('SubmitShoeResultDto', () => {
     expect(await errorsFor({ ...VALID, source: 'server' })).toEqual(['source']);
   });
 
+  it('never lets a client set `submittedAt` — it is stamped server-side', async () => {
+    expect(
+      await errorsFor({ ...VALID, submittedAt: '2026-10-05T10:15:00.000Z' }),
+    ).toEqual(['submittedAt']);
+  });
+
   it('requires a model version', async () => {
     expect(await errorsFor({ brand: 'Nike', confidence: 0.5 })).toContain(
       'modelVersion',
@@ -114,7 +119,6 @@ describe('SubmitShoeResultDto', () => {
     ['confidence below 0', { confidence: -0.1 }, 'confidence'],
     ['an unknown condition code', { conditionCode: 'C9' }, 'conditionCode'],
     ['an unknown outcome', { outcome: 'maybe' }, 'outcome'],
-    ['a non-ISO submittedAt', { submittedAt: '05/10/2026' }, 'submittedAt'],
     ['a non-object raw', { raw: 'just a string' }, 'raw'],
   ])('rejects %s', async (_label, patch, property) => {
     expect(await errorsFor({ ...VALID, ...patch })).toContain(property);

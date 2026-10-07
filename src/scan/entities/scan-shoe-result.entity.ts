@@ -112,7 +112,8 @@ export class ScanShoeResultEntity {
   @Column({ type: 'jsonb', nullable: true })
   raw: Record<string, unknown> | null;
 
-  /** When the device produced the result, not when we received it. The default
+  /** When the server accepted this submit (server clock; the client cannot set
+   *  it). Rewritten on every replace, unlike createdAt. The default
    *  mirrors the DEFAULT now() in the migration — without it TypeORM sees the
    *  SQL default as drift and migration:generate emits a spurious ALTER. */
   @Column({ type: 'timestamptz', default: () => 'now()' })

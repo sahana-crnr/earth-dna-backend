@@ -112,7 +112,8 @@ export class ScanResultService {
         conditionCode: dto.conditionCode ?? null,
         candidates,
         raw: dto.raw ?? null,
-        submittedAt: dto.submittedAt ? new Date(dto.submittedAt) : new Date(),
+        // Server clock only — never taken from the body (see the DTO header).
+        submittedAt: new Date(),
       };
       // save() rather than insert/update: a free-form jsonb column cannot be
       // expressed in TypeORM's QueryDeepPartialEntity, and setting `id` makes
