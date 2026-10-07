@@ -26,11 +26,16 @@ export class ResponseInterceptor<T> implements NestInterceptor<
     context: ExecutionContext,
     next: CallHandler<T>,
   ): Observable<ApiResponse<T>> {
-    const { statusCode } = context.switchToHttp().getResponse<Response>();
+    const response = context.switchToHttp().getResponse<Response>();
 
     return next.handle().pipe(
       map((data) => ({
-        statusCode,
+        // Read AFTER the handler, not before. @HttpCode is already applied by
+        // the time intercept() runs, so static routes are unaffected — but a
+        // handler that sets the status itself (the F2 result submit answers 201
+        // on create, 200 on replace) would otherwise put a number in the body
+        // that contradicts the status line.
+        statusCode: response.statusCode,
         message: 'Success',
         data,
         timestamp: new Date().toISOString(),

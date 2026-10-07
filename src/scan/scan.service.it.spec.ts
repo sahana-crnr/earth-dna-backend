@@ -72,6 +72,8 @@ const CFG: ScanConfig = {
   deleteObjectsOnRemove: true,
   draftAbandonDays: 30,
   photoUrlTtlSeconds: 60,
+  resultMaxCandidates: 3,
+  resultRawMaxBytes: 8192,
 };
 
 async function code(p: Promise<unknown>): Promise<string> {
