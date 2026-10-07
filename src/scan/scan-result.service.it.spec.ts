@@ -21,6 +21,13 @@ import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
 import { ScanService } from './scan.service';
 import { ScanResultService } from './scan-result.service';
+import { ScanResultsBuilder } from './scan-results.builder';
+import { CatalogService } from '../catalog/catalog.service';
+import { CatalogBrandEntity } from '../catalog/entities/catalog-brand.entity';
+import { CatalogCategoryEntity } from '../catalog/entities/catalog-category.entity';
+import { CatalogProductEntity } from '../catalog/entities/catalog-product.entity';
+import { CatalogSizeEntity } from '../catalog/entities/catalog-size.entity';
+import type { CatalogConfig } from '../config/catalog.config';
 import { SHOE_VIEWS } from './scan.types';
 import type { SubmitShoeResultDto } from './dto/submit-shoe-result.dto';
 import type { ScanConfig } from '../config/scan.config';
@@ -65,6 +72,14 @@ const CFG: ScanConfig = {
   resultMaxCandidates: 3,
   // Small on purpose, so the oversize-blob test stays cheap.
   resultRawMaxBytes: 200,
+  valuePlaceholder: true,
+  thumbnailView: 'right',
+};
+
+const CATALOG_CFG: CatalogConfig = {
+  mutedEndpoints: [],
+  listMax: 500,
+  source: null,
 };
 
 const RESULT: SubmitShoeResultDto = {
@@ -149,13 +164,9 @@ d('ScanResultService (integration, real Postgres)', () => {
           username: process.env.DB_USERNAME,
           password: process.env.DB_PASSWORD,
           database: process.env.DB_NAME,
-          entities: [
-            UserEntity,
-            ScanEntity,
-            ScanShoeEntity,
-            ScanPhotoEntity,
-            ScanShoeResultEntity,
-          ],
+          // Every entity: ScanShoeEntity now links to ShoeEntity, which links to
+          // the catalog, so a hand-picked list would miss metadata.
+          entities: [__dirname + '/../**/*.entity{.ts,.js}'],
           synchronize: false,
           logging: false,
         }),
@@ -164,15 +175,24 @@ d('ScanResultService (integration, real Postgres)', () => {
           ScanShoeEntity,
           ScanPhotoEntity,
           ScanShoeResultEntity,
+          CatalogBrandEntity,
+          CatalogCategoryEntity,
+          CatalogSizeEntity,
+          CatalogProductEntity,
         ]),
       ],
       providers: [
         ScanService,
         ScanResultService,
+        ScanResultsBuilder,
+        CatalogService,
         { provide: PhotoStorage, useValue: storage },
         {
           provide: ConfigService,
-          useValue: { get: (k: string) => (k === 'scan' ? CFG : undefined) },
+          useValue: {
+            get: (k: string) =>
+              k === 'scan' ? CFG : k === 'catalog' ? CATALOG_CFG : undefined,
+          },
         },
       ],
     }).compile();

@@ -217,6 +217,34 @@ export class ScanService {
     });
   }
 
+  // ─── E20 delete an empty draft ───────────────────────────────────────────
+  /**
+   * Removes a draft session that has no shoes (added for the app's "discard
+   * empty scan" case, 2026-10-07). A processed session is never deleted
+   * (409 NOT_DRAFT); a draft that already holds a shoe answers 409
+   * SCAN_NOT_EMPTY so photos are never dropped by accident — remove the shoes
+   * first (E5). Row lock keeps a concurrent "add shoe" from racing the delete.
+   */
+  async deleteEmptyDraft(userId: string, scanId: string): Promise<void> {
+    await this.dataSource.transaction(async (m) => {
+      const scan = await findOwnedScan(m, userId, scanId, true);
+      assertDraft(scan);
+      const shoes = await m.count(ScanShoeEntity, {
+        where: { scanId: scan.id },
+      });
+      if (shoes > 0) {
+        throw new ApiError(
+          HttpStatus.CONFLICT,
+          'SCAN_NOT_EMPTY',
+          `Scan still has ${shoes} shoe(s); remove them first`,
+          { shoeCount: shoes },
+        );
+      }
+      await m.delete(ScanEntity, { id: scan.id });
+    });
+    this.logger.log(`scan ${scanId} deleted (empty draft)`);
+  }
+
   // ─── E6 upload / retake one view ─────────────────────────────────────────
   async uploadPhoto(
     userId: string,

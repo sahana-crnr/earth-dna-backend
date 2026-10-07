@@ -56,3 +56,54 @@ export type IdentificationOutcome = (typeof IDENTIFICATION_OUTCOMES)[number];
 /** Per-shoe state the "Scan processing" screen renders. */
 export const RESULT_STATUSES = ['waiting', 'identified', 'failed'] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
+
+// ─── F3 review, My Shoes and catalog value sets ──────────────────────────────
+
+/** Gender of the pair as the user states it (F3-D5). An enum, not a table. */
+export const GENDERS = ['men', 'women', 'unisex', 'kids'] as const;
+export type Gender = (typeof GENDERS)[number];
+
+/** What a review produced for training: the prediction stood, or the user
+ *  corrected it (F3-D14). Written once per review, never updated. */
+export const FEEDBACK_TYPES = ['confirmed', 'corrected'] as const;
+export type FeedbackType = (typeof FEEDBACK_TYPES)[number];
+
+/** Review state of a scan shoe as the app renders it; derived from
+ *  scan_shoes.status, never stored separately. */
+export const REVIEW_STATES = ['confirmed', 'rejected'] as const;
+export type ReviewState = (typeof REVIEW_STATES)[number];
+
+export const RECOMMENDED_ACTIONS = [
+  'resell',
+  'repair',
+  'donate',
+  'recycle',
+] as const;
+export type RecommendedAction = (typeof RECOMMENDED_ACTIONS)[number];
+
+export const ACTION_TAKEN = [
+  'none',
+  'resold',
+  'repaired',
+  'donated',
+  'recycled',
+] as const;
+export type ActionTaken = (typeof ACTION_TAKEN)[number];
+
+/** Figma filter buckets; the design skips 20–25 (tracker T18). */
+export const RESALE_BUCKETS = [
+  'under_20',
+  'from_25_to_50',
+  'from_50_to_100',
+  'over_100',
+] as const;
+export type ResaleBucket = (typeof RESALE_BUCKETS)[number];
+
+/** Where a value on `shoes` came from: the static placeholder (now) or the
+ *  ValueLens endpoint (F5/F7). */
+export const VALUE_SOURCES = ['static', 'valuelens'] as const;
+export type ValueSource = (typeof VALUE_SOURCES)[number];
+
+export function isGender(v: unknown): v is Gender {
+  return typeof v === 'string' && (GENDERS as readonly string[]).includes(v);
+}

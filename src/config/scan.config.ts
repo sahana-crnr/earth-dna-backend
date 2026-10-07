@@ -1,6 +1,7 @@
 // F1 scan-session rules. Every limit is an env setting with a safe default so
 // product can change it without a code change (decisions F1-D2, D4, D5, D9, D11).
 import { registerAs } from '@nestjs/config';
+import { isShoeView, type ShoeView } from '../scan/scan.types';
 
 export type PhotoType = 'jpeg' | 'png';
 
@@ -27,6 +28,11 @@ export interface ScanConfig {
   resultMaxCandidates: number;
   /** Max serialized bytes of the `raw` ShoeDNA passthrough blob (F2). */
   resultRawMaxBytes: number;
+  /** F3: fill value / recommendation / CO2e on a new My Shoes entry with the
+   *  Figma placeholder set until the ValueLens + CircularSort endpoints exist. */
+  valuePlaceholder: boolean;
+  /** F3: which captured view becomes the My Shoes thumbnail (F3-D3). */
+  thumbnailView: ShoeView;
 }
 
 export default registerAs(
@@ -55,6 +61,8 @@ export default registerAs(
       process.env.SCAN_RESULT_RAW_MAX_BYTES,
       8192,
     ),
+    valuePlaceholder: parseBool(process.env.SHOE_VALUE_PLACEHOLDER, true),
+    thumbnailView: parseView(process.env.SHOE_THUMBNAIL_VIEW, 'right'),
   }),
 );
 
@@ -89,4 +97,13 @@ export function parsePhotoTypes(raw: string | undefined): PhotoType[] {
     else if (v === 'png') out.add('png');
   }
   return out.size > 0 ? [...out] : ['jpeg', 'png'];
+}
+
+/** Unknown view names fall back, so a typo can never break thumbnails. */
+export function parseView(
+  raw: string | undefined,
+  fallback: ShoeView,
+): ShoeView {
+  const v = (raw ?? '').trim().toLowerCase();
+  return isShoeView(v) ? v : fallback;
 }

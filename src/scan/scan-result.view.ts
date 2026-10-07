@@ -3,10 +3,14 @@
 // so the app never has to know the mapping or the rounding.
 import type {
   ConditionCode,
+  Gender,
   IdentificationOutcome,
   IdentificationSource,
+  RecommendedAction,
   ResultStatus,
+  ReviewState,
   ScanStatus,
+  ValueSource,
 } from './scan.types';
 
 export interface ResultCandidateView {
@@ -23,6 +27,10 @@ export interface ShoeResultView {
   subBrand: string | null;
   model: string | null;
   colorway: string | null;
+  /** F3-D18: taxonomy level and material as ShoeDNA reported them. */
+  category: string | null;
+  subCategory: string | null;
+  material: string | null;
   confidence: number | null;
   /** Whole-number percent derived from confidence — what Review Matches shows. */
   matchPercent: number | null;
@@ -36,12 +44,39 @@ export interface ShoeResultView {
   updatedAt: string;
 }
 
+/** F3: the My Shoes entry a review created, as the app shows it back. */
+export interface MyShoeView {
+  id: string;
+  brand: { id: string | null; name: string };
+  subBrand: string | null;
+  category: string | null;
+  subCategory: string | null;
+  model: string | null;
+  color: string | null;
+  size: { id: string | null; label: string | null };
+  gender: Gender | null;
+  condition: { code: ConditionCode | null; label: string | null };
+  material: string | null;
+  recommendedAction: RecommendedAction | null;
+  resale: { min: number | null; max: number | null; currency: string };
+  co2eKg: number | null;
+  valueSource: ValueSource;
+  thumbnailUrl: string | null;
+  createdAt: string;
+}
+
 export interface ShoeResultEntryView {
   shoeId: string;
   position: number;
   label: string;
   status: ResultStatus;
   result: ShoeResultView | null;
+  /** F3: null until the user confirms or rejects this shoe. */
+  review: ReviewState | null;
+  myShoeId: string | null;
+  myShoe: MyShoeView | null;
+  /** F3: the predicted brand resolved against the catalog, for the dropdown prefill. */
+  suggested: { brandId: string | null; brand: string | null };
 }
 
 export interface ScanResultsView {
@@ -49,6 +84,8 @@ export interface ScanResultsView {
   status: ScanStatus;
   /** True once every shoe has a terminal result; the processing screen stops polling. */
   allResolved: boolean;
+  /** F3: "N of M reviewed" for this session (F3-D10). */
+  reviewed: { done: number; total: number };
   shoes: ShoeResultEntryView[];
 }
 

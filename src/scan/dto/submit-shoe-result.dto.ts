@@ -139,4 +139,26 @@ export class SubmitShoeResultDto {
   @IsOptional()
   @IsObject()
   raw?: Record<string, unknown>;
+
+  // ─── F3-D18: taxonomy level and material, when ShoeDNA returns them ──────
+  @ApiPropertyOptional({ example: 'running' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  category?: string;
+
+  @ApiPropertyOptional({ example: 'cloudmonster' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  subCategory?: string;
+
+  @ApiPropertyOptional({
+    example: 'Recycled Polyester',
+    description: 'null until the model returns it',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  material?: string;
 }

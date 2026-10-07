@@ -6,10 +6,17 @@ import {
   HttpStatus,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import { GUARDS_METADATA } from '@nestjs/common/constants';
+import {
+  GUARDS_METADATA,
+  HTTP_CODE_METADATA,
+  METHOD_METADATA,
+  PATH_METADATA,
+} from '@nestjs/common/constants';
+import { RequestMethod } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiError } from '../common/errors/api-error';
 import { parseManifest, ScanController } from './scan.controller';
+import { ScanService } from './scan.service';
 import { mapMulter } from './scan-http-error.filter';
 import { ShoeViewPipe } from './shoe-view.pipe';
 
@@ -26,6 +33,24 @@ describe('ScanController wiring', () => {
       ScanController,
     ) as unknown[];
     expect(guards).toContain(JwtAuthGuard);
+  });
+
+  it('E20 DELETE /scans/:scanId answers 204 and delegates to deleteEmptyDraft', async () => {
+    // Metadata lives on the unbound handler, which is what Nest reads too.
+    const handler = Object.getOwnPropertyDescriptor(
+      ScanController.prototype,
+      'deleteScan',
+    )!.value as object;
+    const path = Reflect.getMetadata(PATH_METADATA, handler) as string;
+    const method = Reflect.getMetadata(METHOD_METADATA, handler) as number;
+    const status = Reflect.getMetadata(HTTP_CODE_METADATA, handler) as number;
+    expect(path).toBe(':scanId');
+    expect(method).toBe(RequestMethod.DELETE);
+    expect(status).toBe(204);
+    const svc = { deleteEmptyDraft: jest.fn().mockResolvedValue(undefined) };
+    const ctrl = new ScanController(svc as unknown as ScanService);
+    await expect(ctrl.deleteScan('u', 's')).resolves.toBeUndefined();
+    expect(svc.deleteEmptyDraft).toHaveBeenCalledWith('u', 's');
   });
 });
 

@@ -121,6 +121,22 @@ export class ScanController {
     return this.scans.deleteShoe(userId, scanId, shoeId);
   }
 
+  @Delete(':scanId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'E20 — delete an empty draft session',
+    description:
+      'Only a draft with no shoes can be deleted. A processed session answers 409 NOT_DRAFT; a draft holding shoes answers 409 SCAN_NOT_EMPTY (remove the shoes with E5 first).',
+  })
+  @ApiResponse({ status: 204, description: 'Deleted' })
+  @ApiResponse({ status: 409, description: 'NOT_DRAFT / SCAN_NOT_EMPTY' })
+  deleteScan(
+    @CurrentUser('sub') userId: string,
+    @Param('scanId', uuid) scanId: string,
+  ): Promise<void> {
+    return this.scans.deleteEmptyDraft(userId, scanId);
+  }
+
   @Put(':scanId/shoes/:shoeId/photos/:view')
   @Throttle({ default: { limit: 60, ttl: 60000 } })
   @UseInterceptors(FileInterceptor('file'))
