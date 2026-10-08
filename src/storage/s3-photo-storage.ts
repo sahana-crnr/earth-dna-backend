@@ -1,5 +1,6 @@
-// S3 implementation of PhotoStorage. Locally STORAGE_S3_ENDPOINT points at
-// LocalStack and fixed dummy credentials are used, so a developer's real AWS
+// S3 implementation of PhotoStorage. Locally STORAGE_S3_ENDPOINT points at an
+// S3 emulator (MinIO in local-infra) and the STORAGE_S3_ACCESS_KEY / SECRET_KEY
+// pair is used (dummy `test`/`test` by default), so a developer's real AWS
 // profile is never sent to the emulator. On dev/prod the endpoint is unset and
 // the SDK uses the ECS task role.
 import { Injectable, Logger } from '@nestjs/common';
@@ -37,7 +38,10 @@ export class S3PhotoStorage extends PhotoStorage {
           ? {
               endpoint,
               forcePathStyle: cfg?.forcePathStyle ?? false,
-              credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
+              credentials: {
+                accessKeyId: cfg?.accessKey ?? 'test',
+                secretAccessKey: cfg?.secretKey ?? 'test',
+              },
             }
           : {}),
       });
