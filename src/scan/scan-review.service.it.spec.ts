@@ -401,8 +401,19 @@ d('ScanReviewService (integration, real Postgres)', () => {
     expect(row?.msrp).toBe(190);
   });
 
-  it('confirm on a prediction without a brand needs brandId (BRAND_REQUIRED)', async () => {
+  it('confirm on a prediction without a usable brand needs brandId (BRAND_REQUIRED)', async () => {
     const userId = await newUser();
+    // ShoeDNA's "Unknown" sentinel behaves like no brand at all
+    const unk = await reviewableScan(userId, 1, {
+      ...RESULT,
+      brand: 'Unknown',
+    });
+    expect(
+      await code(reviews.confirm(userId, unk.scanId, unk.shoeIds[0], {})),
+    ).toBe('BRAND_REQUIRED');
+    expect(
+      (await results.results(userId, unk.scanId)).shoes[0].suggested,
+    ).toEqual({ brandId: null, brand: null });
     const { scanId, shoeIds } = await reviewableScan(userId, 1, {
       modelVersion: 'x',
       outcome: 'failed',
@@ -546,16 +557,19 @@ d('ScanReviewService (integration, real Postgres)', () => {
     );
   });
 
-  it('placeholders are deterministic per shoe and anonymiseForUser nulls the user', async () => {
+  it('placeholders are deterministic per shoe; confirm with a different brand is logged as corrected', async () => {
     const userId = await newUser();
-    const { scanId, shoeIds } = await reviewableScan(userId);
+    const { scanId, shoeIds } = await reviewableScan(userId, 2);
     const view = await reviews.confirm(userId, scanId, shoeIds[0], {});
     const row = (await entryFor(shoeIds[0]))!;
     expect(row.valueComputedAt).not.toBeNull();
     expect(view.shoes[0].myShoe?.resale.currency).toBe('USD');
-    expect(await reviews.anonymiseForUser(userId)).toBe(1);
-    const fb = await feedbackFor(shoeIds[0]);
-    expect(fb[0].userId).toBeNull();
-    expect(fb[0].shoeId).toBe(row.id);
+    // predicted model/colorway carried on a bare confirm (none in RESULT → null)
+    expect(row.model).toBeNull();
+    // confirm but with another brand → feedback says corrected, subBrand dropped
+    await reviews.confirm(userId, scanId, shoeIds[1], { brandId: adidas.id });
+    const fb = await feedbackFor(shoeIds[1]);
+    expect(fb[0].type).toBe('corrected');
+    expect((await entryFor(shoeIds[1]))?.subBrand).toBeNull();
   });
 });

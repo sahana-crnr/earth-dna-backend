@@ -5,6 +5,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EntityManager, In } from 'typeorm';
+import { slugify } from '../catalog/catalog-rules';
 import { CatalogService } from '../catalog/catalog.service';
 import type { ScanConfig } from '../config/scan.config';
 import { PhotoStorage } from '../storage/photo-storage';
@@ -17,7 +18,7 @@ import {
   matchPercent,
   resultStatusFor,
 } from './result-rules';
-import { reviewStateFor, reviewedCount } from './review-rules';
+import { isUnknownBrand, reviewStateFor, reviewedCount } from './review-rules';
 import { labelFor } from './scan-rules';
 import type {
   MyShoeView,
@@ -62,28 +63,31 @@ export class ScanResultsBuilder {
       results.map((r) => r.brand),
     );
 
-    const views: ShoeResultEntryView[] = [];
-    for (const s of shoes) {
-      const row = resultByShoe.get(s.id) ?? null;
-      const entry = entryByShoe.get(s.id) ?? null;
-      const suggestedBrand = row
-        ? (brands.get(slugOf(row.brand)) ?? null)
-        : null;
-      views.push({
-        shoeId: s.id,
-        position: s.position,
-        label: labelFor(s.position),
-        status: resultStatusFor(row?.outcome ?? null),
-        result: row ? toResultView(row, includeRaw) : null,
-        review: reviewStateFor(s.status),
-        myShoeId: entry?.id ?? null,
-        myShoe: entry ? await this.toMyShoeView(entry) : null,
-        suggested: {
-          brandId: suggestedBrand?.id ?? null,
-          brand: suggestedBrand?.name ?? row?.brand ?? null,
-        },
-      });
-    }
+    // Thumbnail signing is the only async step per shoe; run them together.
+    const views: ShoeResultEntryView[] = await Promise.all(
+      shoes.map(async (s) => {
+        const row = resultByShoe.get(s.id) ?? null;
+        const entry = entryByShoe.get(s.id) ?? null;
+        const predicted = row && !isUnknownBrand(row.brand) ? row.brand : null;
+        const suggestedBrand = predicted
+          ? (brands.get(slugify(predicted)) ?? null)
+          : null;
+        return {
+          shoeId: s.id,
+          position: s.position,
+          label: labelFor(s.position),
+          status: resultStatusFor(row?.outcome ?? null),
+          result: row ? toResultView(row, includeRaw) : null,
+          review: reviewStateFor(s.status),
+          myShoeId: entry?.id ?? null,
+          myShoe: entry ? await this.toMyShoeView(entry) : null,
+          suggested: {
+            brandId: suggestedBrand?.id ?? null,
+            brand: suggestedBrand?.name ?? predicted,
+          },
+        };
+      }),
+    );
     return {
       scanId: scan.id,
       status: scan.status,
@@ -134,15 +138,6 @@ export class ScanResultsBuilder {
       return null;
     }
   }
-}
-
-function slugOf(name: string | null): string {
-  return (name ?? '')
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
 }
 
 /** Entity → response. The label and matchPercent are derived, never stored.

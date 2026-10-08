@@ -10,11 +10,13 @@ import {
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Unique,
 } from 'typeorm';
 import { GENDERS, type Gender } from '../../scan/scan.types';
 import { CatalogBrandEntity } from './catalog-brand.entity';
 
 @Entity('catalog_products')
+@Unique('UQ_catalog_products_sku', ['sku'])
 @Index('IDX_catalog_products_brand_model', ['brandId', 'model'])
 @Index('IDX_catalog_products_brand_size', ['brandId', 'size'])
 export class CatalogProductEntity {
@@ -32,7 +34,7 @@ export class CatalogProductEntity {
   brand?: CatalogBrandEntity;
 
   /** Retail identifier from the source (unique). */
-  @Column({ type: 'varchar', length: 40, unique: true })
+  @Column({ type: 'varchar', length: 40 })
   sku: string;
 
   @Column({ type: 'varchar', length: 200, nullable: true })

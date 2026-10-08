@@ -114,7 +114,7 @@ Build, test locally, raise a PR, deploy to dev, test on dev with a browser test 
 | E7 | `DELETE /scans/{scanId}/shoes/{shoeId}/photos/{view}` | — | 200 session | 400 `INVALID_VIEW` · 404 (incl. view not captured) · 409 `NOT_DRAFT` |
 | E8 | `POST /scans/{scanId}/photos/batch` | multipart: `manifest` (JSON) + files, see below | 200 batch result | 400 `INVALID_MANIFEST` · 400 `DUPLICATE_FILE_FIELD` · 404 · 409 `NOT_DRAFT` · 413 batch over limits |
 | E9 | `POST /scans/{scanId}/finish` | `{}` | 200 session (`status: processing`) | 404 · 409 `NOT_DRAFT` (already finished) · 409 `SCAN_INCOMPLETE` with `{ incomplete: [{ shoeId, label, missing }] }` · 409 `NO_SHOES` |
-| E20 | `DELETE /scans/{scanId}` | — | 204 (empty body) | 404 · 409 `NOT_DRAFT` (session was processed; never deleted) · 409 `SCAN_NOT_EMPTY` with `{ shoeCount }` (remove shoes with E5 first). Added 2026-10-07 for the app's "discard empty scan" case |
+| E20 | `DELETE /scans/{scanId}` | — | 204 (empty body) | 404 · 409 `NOT_DRAFT` (session was processed; never deleted; an empty `abandoned` session may still be deleted) · 409 `SCAN_NOT_EMPTY` with `{ shoeCount }` (remove shoes with E5 first). Added 2026-10-07 for the app's "discard empty scan" case |
 
 E6 uses `PUT` because it is idempotent: the same call twice leaves one photo (retake = upload again, F1-D10). Asana's task text says `POST`; `PUT` is the only change.
 

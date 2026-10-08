@@ -23,6 +23,7 @@ import {
   importProducts,
   importTaxonomy,
   sizesByBrand,
+  titleCase,
   type ProductRow,
   type TaxonomyRow,
 } from '../src/catalog/catalog-rules';
@@ -44,6 +45,8 @@ const SOURCE_TAG = 'import';
  *  mapping lives here only, so a different export touches one place. */
 const TAXONOMY_SQL = (schema: string) =>
   `SELECT category, subcategory, brand FROM "${schema}"."tracker" WHERE brand IS NOT NULL AND brand <> ''`;
+/** Keyset paging on sku_id: OFFSET paging re-sorts the whole table on every
+ *  page and was timing out on the shared product database. */
 const PRODUCTS_SQL = (schema: string) =>
   `SELECT sku_id AS sku, brand_s3 AS brand, model, model_code AS "modelCode",
           category, sub_category AS "subCategory", silhouette, gender,
@@ -51,8 +54,13 @@ const PRODUCTS_SQL = (schema: string) =>
           listed_date::text AS "releaseDate", title
      FROM "${schema}"."products"
     WHERE sku_id IS NOT NULL AND brand_s3 IS NOT NULL AND brand_s3 <> ''
+      AND sku_id > $1
     ORDER BY sku_id
-    LIMIT $1 OFFSET $2`;
+    LIMIT $2`;
+
+/** Per-statement cap on the source connection, so a busy product database
+ *  fails fast with a clear error instead of hanging the run for an hour. */
+const SOURCE_STATEMENT_TIMEOUT_MS = 120_000;
 
 async function main(): Promise<void> {
   const src = parseSource(process.env);
@@ -70,6 +78,7 @@ async function main(): Promise<void> {
     database: src.database,
     ssl: src.ssl ? { rejectUnauthorized: false } : false,
     logging: false,
+    extra: { statement_timeout: SOURCE_STATEMENT_TIMEOUT_MS },
   });
   await source.initialize();
   // The CLI data source logs every query; 21k upserts would drown the summary.
@@ -81,6 +90,11 @@ async function main(): Promise<void> {
     const taxonomyRows: TaxonomyRow[] = await source.query(
       TAXONOMY_SQL(src.schema),
     );
+    if (taxonomyRows.length === 0) {
+      throw new Error(
+        'source taxonomy table returned no rows — refusing to deactivate the whole catalog',
+      );
+    }
     const plan = importTaxonomy(taxonomyRows);
     console.log(
       `taxonomy: ${taxonomyRows.length} rows → ${plan.categories.length} categories, ${plan.subcategories.length} sub-categories, ${plan.brands.length} brands, ${plan.links.length} links, ${plan.skipped} skipped`,
@@ -88,14 +102,20 @@ async function main(): Promise<void> {
 
     // ─── products (paged) ──────────────────────────────────────────────────
     const productRows: ProductRow[] = [];
-    for (let offset = 0; ; offset += PAGE) {
+    let lastSku = '';
+    for (;;) {
       const page: ProductRow[] = await source.query(PRODUCTS_SQL(src.schema), [
+        lastSku,
         PAGE,
-        offset,
       ]);
       productRows.push(...page);
+      if (page.length > 0) {
+        lastSku = page[page.length - 1].sku;
+        process.stdout.write(`products: read ${productRows.length}…\r`);
+      }
       if (page.length < PAGE) break;
     }
+    process.stdout.write('\n');
     const { products, skipped: productsSkipped } = importProducts(productRows);
     // Brands seen only in products still get a catalog row, so every product
     // can be attached; they carry no taxonomy links.
@@ -165,7 +185,7 @@ async function main(): Promise<void> {
       const brandIds = new Map<string, string>();
       const allBrands = [
         ...plan.brands,
-        ...extraBrands.map((slug) => ({ slug, name: titleFromSlug(slug) })),
+        ...extraBrands.map((slug) => ({ slug, name: titleCase(slug) })),
       ];
       for (const [i, b] of allBrands.entries()) {
         const row = await upsertBySlug(m, CatalogBrandEntity, b.slug, {
@@ -247,22 +267,31 @@ async function main(): Promise<void> {
         .where('"importedAt" < :now', { now })
         .execute();
 
-      // sizes: per brand from products; generic list always present
+      // sizes: per brand from products. Insert what is missing, never delete —
+      // shoes.sizeId points at these rows (FK ON DELETE SET NULL), so a re-seed
+      // must not touch rows the app may already reference.
       let sizeRows = 0;
       for (const [slug, labels] of perBrandSizes) {
         const brandId = brandIds.get(slug);
         if (!brandId) continue;
-        await m.delete(CatalogSizeEntity, { brandId, system: 'US' });
-        await m.insert(
-          CatalogSizeEntity,
-          labels.map((label, i) => ({
+        const have = new Set(
+          (
+            await m.find(CatalogSizeEntity, {
+              where: { brandId, system: 'US' },
+              select: { label: true },
+            })
+          ).map((r) => r.label),
+        );
+        const missing = labels
+          .map((label, idx) => ({
             brandId,
             system: 'US',
             label,
-            sortOrder: i,
-          })),
-        );
-        sizeRows += labels.length;
+            sortOrder: idx,
+          }))
+          .filter((r) => !have.has(r.label));
+        if (missing.length > 0) await m.insert(CatalogSizeEntity, missing);
+        sizeRows += missing.length;
       }
       // Generic list: insert whatever label is missing (never delete — a
       // `shoes.sizeId` may point at one of these rows).
@@ -286,21 +315,13 @@ async function main(): Promise<void> {
       if (missingGeneric.length > 0)
         await m.insert(CatalogSizeEntity, missingGeneric);
       console.log(
-        `written: ${catIds.size} categories, ${subIds.size} sub-categories, ${brandIds.size} brands, ${links.length} links, ${skus.size} products, ${sizeRows} brand sizes, generic sizes +${missingGeneric.length}`,
+        `written: ${catIds.size} categories, ${subIds.size} sub-categories, ${brandIds.size} brands, ${links.length} links, ${skus.size} products, ${sizeRows} new brand sizes, generic sizes +${missingGeneric.length}`,
       );
     });
   } finally {
     await source.destroy();
     await AppDataSource.destroy();
   }
-}
-
-function titleFromSlug(slug: string): string {
-  return slug
-    .split('-')
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
 }
 
 async function upsertBySlug<T extends { id: string; slug: string }>(

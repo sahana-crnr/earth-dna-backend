@@ -11,7 +11,7 @@
 // scan → touchScan → build the results view from the same manager (F3-D11).
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource } from 'typeorm';
 import { CatalogService } from '../catalog/catalog.service';
 import { ApiError } from '../common/errors/api-error';
 import type { ScanConfig } from '../config/scan.config';
@@ -23,6 +23,7 @@ import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
 import { ShoeFeedbackEntity } from './entities/shoe-feedback.entity';
 import {
+  brandCorrected,
   isCompleted,
   missingFields,
   overlayDetails,
@@ -151,6 +152,8 @@ export class ScanReviewService {
       const identity = overlayDetails(
         {
           brand: result.brand,
+          model: result.model,
+          colorway: result.colorway,
           subBrand: result.subBrand,
           category: result.category,
           subCategory: result.subCategory,
@@ -160,12 +163,18 @@ export class ScanReviewService {
         answer,
       );
       if (!identity.brand) {
+        // Covers both a failed result and ShoeDNA's "Unknown" sentinel.
         throw new ApiError(
           HttpStatus.BAD_REQUEST,
           'BRAND_REQUIRED',
-          'The prediction has no brand; send brandId',
+          'The prediction has no usable brand; send brandId',
         );
       }
+      // Feedback semantics: did the user correct the brand? A confirm that
+      // overrides the brand is a correction for training, whatever the route.
+      const corrected =
+        mode === 'reject' ||
+        brandCorrected(result.brand, brandRow?.name ?? null);
       // Brand id: the body's, else the predicted brand matched to the catalog.
       const resolvedBrand =
         brandRow ?? (await this.catalog.brandByName(m, identity.brand));
@@ -214,7 +223,7 @@ export class ScanReviewService {
           scanShoeId: shoe.id,
           shoeId: saved.id,
           userId,
-          type: mode === 'confirm' ? 'confirmed' : 'corrected',
+          type: corrected ? 'corrected' : 'confirmed',
           modelVersion: result.modelVersion,
           original: {
             brand: result.brand,
@@ -266,18 +275,6 @@ export class ScanReviewService {
       );
       return this.builder.build(m, scan, false);
     });
-  }
-
-  /** Account-deletion hook (F3-D15): keep the training rows, drop the identity.
-   *  The FK already does this on a hard user delete; this is for soft flows. */
-  async anonymiseForUser(userId: string, m?: EntityManager): Promise<number> {
-    const mgr = m ?? this.dataSource.manager;
-    const r = await mgr.update(
-      ShoeFeedbackEntity,
-      { userId },
-      { userId: null },
-    );
-    return r.affected ?? 0;
   }
 }
 

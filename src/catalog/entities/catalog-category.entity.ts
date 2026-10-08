@@ -7,16 +7,18 @@ import {
   Entity,
   OneToMany,
   PrimaryGeneratedColumn,
+  Unique,
   UpdateDateColumn,
 } from 'typeorm';
 import { CatalogSubcategoryEntity } from './catalog-subcategory.entity';
 
 @Entity('catalog_categories')
+@Unique('UQ_catalog_categories_slug', ['slug'])
 export class CatalogCategoryEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar', length: 100, unique: true })
+  @Column({ type: 'varchar', length: 100 })
   slug: string;
 
   @Column({ type: 'varchar', length: 120 })

@@ -19,10 +19,10 @@ F1 stores the photos, F2 stores the prediction. F3 is the first step that create
 - Login required on every endpoint. A user only ever reviews their own sessions.
 - Only a session whose F2 results are all in (status `review`) accepts a review.
 - Each shoe is reviewed once. A second confirm or reject answers 409 `ALREADY_REVIEWED`. Later edits happen on the Shoe Profile page (F5).
-- Confirm and reject take the same body. On reject, brand, model, colour and size are required. On confirm they are optional and the detected values fill the gaps.
+- Confirm and reject take the same body: brand, model, colour, size, gender. On reject, brand, model, colour and size are required. On confirm everything is optional: the predicted brand, model and colour fill whatever the body leaves out.
 - Brand and size must be catalog ids. Model and colour are free text with length limits.
-- The user's answer always wins over the prediction, including condition.
-- Every review writes one feedback row (prediction + answer + time). Feedback rows are never changed or deleted; on account deletion they are kept anonymised.
+- The user's answer wins over the prediction for brand, model and colour. Category, sub-category, condition and material are never in the body and always come from the prediction (F3-D5, D8). A predicted brand of "Unknown" counts as no brand: the user must pick one.
+- Every review writes one feedback row (prediction + answer + time): `confirmed` when the brand stood, `corrected` on reject or when the user changed the brand. Feedback rows are never changed or deleted; on account deletion the database keeps them with the user id cleared.
 - My Shoes value, recommendation and CO2e are placeholders until the ValueLens and CircularSort endpoints exist.
 - The catalog is seeded by a re-runnable script from the S3 footwear taxonomy and the product export. No vendor name appears in tables, columns or routes.
 
@@ -87,7 +87,7 @@ Size normalisation (source sizes are raw text: `8`, `8.5`, `10 Wide`, `9-10`, `M
 ```json
 { "brandId": "uuid", "model": "Cloudmonster 2", "color": "Black", "sizeId": "uuid", "gender": "women" }
 ```
-Confirm: every field optional (detected brand used when `brandId` absent). Reject: `brandId`, `model`, `color`, `sizeId` required; `gender` optional.
+Confirm: every field optional; the predicted brand, model and colour are used for whatever is absent. Reject: `brandId`, `model`, `color`, `sizeId` required; `gender` optional.
 Limits: model ≤ 150, color ≤ 100, trimmed; gender ∈ men, women, unisex, kids. Unknown or inactive ids → 400 `UNKNOWN_BRAND` / `UNKNOWN_SIZE`. Category, subCategory, condition and material are never in the body: they come from the F2 result.
 
 ### How the five fields are stored and returned
@@ -133,8 +133,8 @@ Muted catalog routes answer 404 `ENDPOINT_MUTED`. Error body: `{ statusCode, tim
 ## 4. Behaviour
 
 - **Review transaction** (confirm and reject share one path): lock the scan row (`findOwnedScan(…, lock)`), check status ∈ {`review`} (also `processing` when this shoe already has a result, so a slow sibling shoe never blocks review), load the shoe and its result, refuse if already reviewed or no result, resolve catalog ids, overlay body on result (body wins), require a brand, insert `shoes` row, insert `shoe_feedback` row, set `scan_shoes.status`, recompute `reviewed`, flip `scans.status` to `completed` when done == total, `touchScan`, build the results view inside the transaction.
-- **Overlay rule**: brand = body `brandId` if present, else the ShoeDNA brand (catalog-matched by slug when possible, text kept either way); model, color, size, gender = body value or null. Category, subCategory, condition, material = F2 result as stored, never from the body.
-- **Feedback `original`** = the F2 result row as stored (brand, subBrand, model, colorway, confidence, conditionCode, modelVersion, candidates). **`answer`** = the resolved final fields. `type` = `confirmed` for E12, `corrected` for E13.
+- **Overlay rule**: brand = body `brandId` if present, else the ShoeDNA brand (catalog-matched by slug when possible; "Unknown" counts as none → 400 `BRAND_REQUIRED`); model and color = body value, else the predicted value, else null; size and gender = body value or null. When the body changes the brand the predicted sub-brand is dropped. Category, subCategory, condition, material = F2 result as stored, never from the body.
+- **Feedback `original`** = the F2 result row as stored (brand, subBrand, model, colorway, confidence, conditionCode, modelVersion, candidates). **`answer`** = the resolved final fields. `type` = `corrected` for E13 and for an E12 that changed the brand, else `confirmed`.
 - **Placeholders** (`SHOE_VALUE_PLACEHOLDER=true`): `recommendedAction`, `resaleMin/Max`, `demandNote`, `recommendationReason`, `co2eKg` picked deterministically from the Figma option set by hashing the shoe id, so the same shoe always shows the same numbers; `valueSource = static`, `valueComputedAt = now`.
 - **Thumbnail**: key of the `SHOE_THUMBNAIL_VIEW` photo, else the first photo by view order.
 - **Catalog match**: after overlay, if brand + model (+ colour, + size label) match a `catalog_products` row, store `catalogProductId` and `msrp`; a miss stores nulls, never an error.

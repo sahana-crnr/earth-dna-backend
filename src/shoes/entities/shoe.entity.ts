@@ -15,6 +15,7 @@ import {
   ManyToOne,
   OneToOne,
   PrimaryGeneratedColumn,
+  Unique,
   UpdateDateColumn,
 } from 'typeorm';
 import {
@@ -43,6 +44,7 @@ const money = {
 };
 
 @Entity('shoes')
+@Unique('UQ_shoes_scan_shoe', ['scanShoeId'])
 @Index('IDX_shoes_user_deleted', ['userId', 'deletedAt'])
 @Index('IDX_shoes_user_action', ['userId', 'actionTaken'])
 @Index('IDX_shoes_user_recommended', ['userId', 'recommendedAction'])
@@ -60,7 +62,7 @@ export class ShoeEntity {
 
   /** Origin scan shoe; one entry per scan shoe (F3-D9). Null only after the
    *  scan was purged (abandon job / account flow). */
-  @Column({ type: 'uuid', nullable: true, unique: true })
+  @Column({ type: 'uuid', nullable: true })
   scanShoeId: string | null;
 
   @OneToOne(() => ScanShoeEntity, { onDelete: 'SET NULL' })

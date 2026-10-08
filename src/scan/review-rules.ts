@@ -28,6 +28,8 @@ export interface DetailsAnswer {
  *  the rest is carried through untouched (F3-D5, D8). */
 export interface PredictedIdentity {
   brand: string | null;
+  model: string | null;
+  colorway: string | null;
   subBrand: string | null;
   category: string | null;
   subCategory: string | null;
@@ -35,8 +37,13 @@ export interface PredictedIdentity {
   material: string | null;
 }
 
-export interface ResolvedIdentity extends PredictedIdentity {
+export interface ResolvedIdentity {
   brand: string | null;
+  subBrand: string | null;
+  category: string | null;
+  subCategory: string | null;
+  conditionCode: ConditionCode | null;
+  material: string | null;
   model: string | null;
   color: string | null;
   size: string | null;
@@ -54,27 +61,56 @@ function pick(body: string | null | undefined, fallback: string | null) {
   return clean(body) ?? clean(fallback);
 }
 
+/** ShoeDNA answers "Unknown" rather than an empty brand (team note); for the
+ *  review it is the same as no brand, so the user is asked to pick one. */
+export function isUnknownBrand(brand: string | null | undefined): boolean {
+  const v = clean(brand);
+  return v === null || v.toLowerCase() === 'unknown';
+}
+
 /**
  * Body value if present (trimmed, non-empty), else the predicted value, else
- * null. Fields the form never carries (category, subCategory, conditionCode,
- * material) are copied from the prediction as they are.
+ * null — for brand, model and colour. Size and gender exist only in the body.
+ * Category, subCategory, conditionCode and material are never in the body and
+ * are copied from the prediction as they are (F3-D5, D8). A predicted brand of
+ * "Unknown" counts as absent. When the body changes the brand, the predicted
+ * sub-brand no longer applies and is dropped.
  */
 export function overlayDetails(
   predicted: PredictedIdentity,
   body: DetailsAnswer,
 ): ResolvedIdentity {
+  const predictedBrand = isUnknownBrand(predicted.brand)
+    ? null
+    : clean(predicted.brand);
+  const brand = pick(body.brand, predictedBrand);
+  const brandChanged =
+    clean(body.brand) !== null &&
+    (predictedBrand === null ||
+      clean(body.brand)!.toLowerCase() !== predictedBrand.toLowerCase());
   return {
-    brand: pick(body.brand, predicted.brand),
-    subBrand: clean(predicted.subBrand),
+    brand,
+    subBrand: brandChanged ? null : clean(predicted.subBrand),
     category: clean(predicted.category),
     subCategory: clean(predicted.subCategory),
     conditionCode: predicted.conditionCode,
     material: clean(predicted.material),
-    model: pick(body.model, null),
-    color: pick(body.color, null),
+    model: pick(body.model, predicted.model),
+    color: pick(body.color, predicted.colorway),
     size: pick(body.size, null),
     gender: body.gender ?? null,
   };
+}
+
+/** True when the user's answer names a different brand than the prediction. */
+export function brandCorrected(
+  predictedBrand: string | null,
+  answerBrand: string | null,
+): boolean {
+  const p = isUnknownBrand(predictedBrand) ? null : clean(predictedBrand);
+  const a = clean(answerBrand);
+  if (a === null) return false;
+  return p === null || a.toLowerCase() !== p.toLowerCase();
 }
 
 // ─── F3-P2 / P3: reviewed counter and completion ─────────────────────────────
