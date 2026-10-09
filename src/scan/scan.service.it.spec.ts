@@ -74,6 +74,8 @@ const CFG: ScanConfig = {
   photoUrlTtlSeconds: 60,
   resultMaxCandidates: 3,
   resultRawMaxBytes: 8192,
+  valuePlaceholder: true,
+  thumbnailView: 'right',
 };
 
 async function code(p: Promise<unknown>): Promise<string> {
@@ -132,7 +134,9 @@ d('ScanService (integration, real Postgres)', () => {
           username: process.env.DB_USERNAME,
           password: process.env.DB_PASSWORD,
           database: process.env.DB_NAME,
-          entities: [UserEntity, ScanEntity, ScanShoeEntity, ScanPhotoEntity],
+          // Every entity: ScanShoeEntity now links to ShoeEntity, which links to
+          // the catalog, so a hand-picked list would miss metadata.
+          entities: [__dirname + '/../**/*.entity{.ts,.js}'],
           synchronize: false,
           logging: false,
         }),
@@ -342,6 +346,56 @@ d('ScanService (integration, real Postgres)', () => {
       1,
     );
     await expectStorageMatchesDb(s.id);
+  });
+
+  it('E20: deletes an empty draft only; shoes or a finished scan block it', async () => {
+    const userId = await newUser();
+    const other = await newUser();
+    const empty = await service.createDraft(userId);
+    expect(await code(service.deleteEmptyDraft(other, empty.id))).toBe(
+      'SCAN_NOT_FOUND',
+    );
+    await service.deleteEmptyDraft(userId, empty.id);
+    expect(await code(service.get(userId, empty.id))).toBe('SCAN_NOT_FOUND');
+
+    const withShoe = await service.addShoe(
+      userId,
+      (await service.createDraft(userId)).id,
+    );
+    expect(await code(service.deleteEmptyDraft(userId, withShoe.id))).toBe(
+      'SCAN_NOT_EMPTY',
+    );
+    await service.deleteShoe(userId, withShoe.id, withShoe.shoes[0].id);
+    await service.deleteEmptyDraft(userId, withShoe.id);
+    expect(await code(service.get(userId, withShoe.id))).toBe('SCAN_NOT_FOUND');
+
+    let done = await service.createDraft(userId);
+    done = await service.addShoe(userId, done.id);
+    for (const v of SHOE_VIEWS) {
+      done = await service.uploadPhoto(
+        userId,
+        done.id,
+        done.shoes[0].id,
+        v,
+        file(PNG),
+        null,
+      );
+    }
+    done = await service.finish(userId, done.id);
+    expect(done.status).toBe('processing');
+    expect(await code(service.deleteEmptyDraft(userId, done.id))).toBe(
+      'NOT_DRAFT',
+    );
+
+    // an empty session the abandon job flipped may still be discarded
+    const stale = await service.createDraft(userId);
+    await ds.query(
+      `UPDATE scans SET "updatedAt" = now() - interval '31 days' WHERE id = $1`,
+      [stale.id],
+    );
+    await service.abandonStaleDrafts();
+    await service.deleteEmptyDraft(userId, stale.id);
+    expect(await code(service.get(userId, stale.id))).toBe('SCAN_NOT_FOUND');
   });
 
   it('another user cannot see or change the scan (404, IDOR)', async () => {

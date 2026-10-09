@@ -45,3 +45,6 @@ docs/
 # Claude project instructions (local only, not committed)
 CLAUDE.md
 
+
+# Team feature guides (F3-D16) live in git; the generic docs/ rule above must not hide them
+!.claude/docs/

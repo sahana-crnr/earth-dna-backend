@@ -22,23 +22,17 @@ import { ScanEntity } from './entities/scan.entity';
 import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
 import { findOwnedScan, notFound, touchScan } from './scan-access';
+import { ScanResultsBuilder, toResultView } from './scan-results.builder';
 import { labelFor } from './scan-rules';
 import {
   checkRawPayload,
-  conditionLabelFor,
-  matchPercent,
   normalizeCandidates,
   resultStatusFor,
   type ResultCandidate,
 } from './result-rules';
 import type { ScanStatus } from './scan.types';
 import type { SubmitShoeResultDto } from './dto/submit-shoe-result.dto';
-import type {
-  ScanResultsView,
-  ShoeResultEntryView,
-  ShoeResultView,
-  SubmitResultView,
-} from './scan-result.view';
+import type { ScanResultsView, SubmitResultView } from './scan-result.view';
 
 /** Scan states that accept a result: everything after /finish, before F3 closes it. */
 const SUBMITTABLE: readonly ScanStatus[] = ['processing', 'review'];
@@ -53,6 +47,7 @@ export class ScanResultService {
 
   constructor(
     private readonly dataSource: DataSource,
+    private readonly builder: ScanResultsBuilder,
     config: ConfigService,
   ) {
     this.cfg = config.get<ScanConfig>('scan')!;
@@ -108,6 +103,9 @@ export class ScanResultService {
         subBrand: dto.subBrand ?? null,
         model: dto.model ?? null,
         colorway: dto.colorway ?? null,
+        category: dto.category ?? null,
+        subCategory: dto.subCategory ?? null,
+        material: dto.material ?? null,
         confidence: dto.confidence ?? null,
         conditionCode: dto.conditionCode ?? null,
         candidates,
@@ -150,7 +148,8 @@ export class ScanResultService {
 
   // ─── E11 per-shoe results ────────────────────────────────────────────────
   // E11 is polled roughly every 2s while processing; raw payloads are large and
-  // should not be returned unless the caller explicitly asks for them.
+  // should not be returned unless the caller explicitly asks for them. The view
+  // itself is built by ScanResultsBuilder, shared with the F3 review routes.
   async results(
     userId: string,
     scanId: string,
@@ -158,34 +157,7 @@ export class ScanResultService {
   ): Promise<ScanResultsView> {
     const m = this.dataSource.manager;
     const scan = await findOwnedScan(m, userId, scanId);
-    const shoes = await m.find(ScanShoeEntity, {
-      where: { scanId: scan.id },
-      order: { position: 'ASC' },
-    });
-    const wantsRaw = includeRaw === true;
-    const rows = shoes.length
-      ? await m.find(ScanShoeResultEntity, {
-          where: { scanShoeId: In(shoes.map((s) => s.id)) },
-        })
-      : [];
-    const byShoe = new Map(rows.map((r) => [r.scanShoeId, r]));
-
-    const entries: ShoeResultEntryView[] = shoes.map((s) => {
-      const row = byShoe.get(s.id) ?? null;
-      return {
-        shoeId: s.id,
-        position: s.position,
-        label: labelFor(s.position),
-        status: resultStatusFor(row?.outcome ?? null),
-        result: row ? toResultView(row, wantsRaw) : null,
-      };
-    });
-    return {
-      scanId: scan.id,
-      status: scan.status,
-      allResolved: shoes.length > 0 && entries.every((e) => e.result !== null),
-      shoes: entries,
-    };
+    return this.builder.build(m, scan, includeRaw === true);
   }
 
   // ─── internals ───────────────────────────────────────────────────────────
@@ -271,32 +243,4 @@ export class ScanResultService {
       );
     }
   }
-}
-
-/** Entity → response. The label and matchPercent are derived, never stored.
- *  `raw` is spread in only when asked for, so the key is absent rather than
- *  null when it was simply not requested. */
-function toResultView(
-  row: ScanShoeResultEntity,
-  includeRaw: boolean,
-): ShoeResultView {
-  return {
-    source: row.source,
-    outcome: row.outcome,
-    modelVersion: row.modelVersion,
-    brand: row.brand,
-    subBrand: row.subBrand,
-    model: row.model,
-    colorway: row.colorway,
-    confidence: row.confidence,
-    matchPercent: matchPercent(row.confidence),
-    condition: {
-      code: row.conditionCode,
-      label: conditionLabelFor(row.conditionCode),
-    },
-    candidates: row.candidates ?? [],
-    ...(includeRaw ? { raw: row.raw } : {}),
-    submittedAt: new Date(row.submittedAt).toISOString(),
-    updatedAt: new Date(row.updatedAt).toISOString(),
-  };
 }

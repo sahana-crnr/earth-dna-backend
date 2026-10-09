@@ -82,6 +82,17 @@ export class ScanShoeResultEntity {
   @Column({ type: 'varchar', length: 120, nullable: true })
   colorway: string | null;
 
+  /** F3-D18: ShoeDNA also returns the taxonomy level and, later, the material.
+   *  Added by the F3 migration, optional on E10, copied to `shoes` on review. */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  category: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  subCategory: string | null;
+
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  material: string | null;
+
   /** 0..1. numeric, not float: the app renders a percent and must not see drift. */
   @Column({
     type: 'numeric',

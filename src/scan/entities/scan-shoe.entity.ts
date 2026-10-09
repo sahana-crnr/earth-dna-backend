@@ -15,6 +15,7 @@ import {
 import { SCAN_SHOE_STATUSES, type ScanShoeStatus } from '../scan.types';
 import { ScanEntity } from './scan.entity';
 import { ScanPhotoEntity } from './scan-photo.entity';
+import { ShoeEntity } from '../../shoes/entities/shoe.entity';
 
 @Entity('scan_shoes')
 @Unique('UQ_scan_shoes_scan_position', ['scanId', 'position'], {
@@ -47,9 +48,17 @@ export class ScanShoeEntity {
   })
   status: ScanShoeStatus;
 
-  /** Set when created by "Rescan shoe" (F5). FK to shoes added in F4/F5. */
+  /** Set when created by "Rescan shoe" (F5). FK to shoes added by the F3
+   *  migration, now that the table exists. */
   @Column({ type: 'uuid', nullable: true })
   rescanOfShoeId: string | null;
+
+  @ManyToOne(() => ShoeEntity, { onDelete: 'SET NULL' })
+  @JoinColumn({
+    name: 'rescanOfShoeId',
+    foreignKeyConstraintName: 'FK_scan_shoes_rescan_of_shoe',
+  })
+  rescanOf?: ShoeEntity;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

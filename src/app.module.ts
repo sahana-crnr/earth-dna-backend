@@ -1,5 +1,5 @@
 // Root module of the application. Wires together config, database, and all
-// feature modules (AuthModule, UserModule, ScanModule).
+// feature modules (AuthModule, UserModule, ScanModule, CatalogModule).
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -16,6 +16,7 @@ import {
   appleConfig,
   storageConfig,
   scanConfig,
+  catalogConfig,
 } from './config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
@@ -23,6 +24,7 @@ import { UserModule } from './user/user.module';
 import { MailModule } from './mail/mail.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ScanModule } from './scan/scan.module';
+import { CatalogModule } from './catalog/catalog.module';
 
 @Module({
   imports: [
@@ -39,6 +41,7 @@ import { ScanModule } from './scan/scan.module';
         appleConfig,
         storageConfig,
         scanConfig,
+        catalogConfig,
       ],
       cache: true,
     }),
@@ -77,6 +80,8 @@ import { ScanModule } from './scan/scan.module';
     // F1 scan sessions (+ daily abandon job, hence the scheduler).
     ScheduleModule.forRoot(),
     ScanModule,
+    // F3 catalog lookups for the review form dropdowns.
+    CatalogModule,
   ],
   controllers: [AppController],
   providers: [

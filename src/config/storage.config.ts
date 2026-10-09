@@ -18,6 +18,14 @@ export interface StorageConfig {
   publicEndpoint: string | null;
   forcePathStyle: boolean;
   region: string;
+  /**
+   * Credentials sent ONLY when `endpoint` is set (local emulator). Dummy
+   * `test`/`test` by default so a developer's real AWS profile never reaches
+   * the emulator; configurable for emulators that check them. Ignored on
+   * dev/prod, where the SDK uses the task role.
+   */
+  accessKey: string;
+  secretKey: string;
 }
 
 export default registerAs(
@@ -28,6 +36,8 @@ export default registerAs(
     publicEndpoint: nonEmpty(process.env.STORAGE_S3_PUBLIC_ENDPOINT),
     forcePathStyle: parseBool(process.env.STORAGE_S3_FORCE_PATH_STYLE, false),
     region: nonEmpty(process.env.AWS_REGION) ?? 'us-east-1',
+    accessKey: nonEmpty(process.env.STORAGE_S3_ACCESS_KEY) ?? 'test',
+    secretKey: nonEmpty(process.env.STORAGE_S3_SECRET_KEY) ?? 'test',
   }),
 );
 
