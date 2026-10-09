@@ -194,16 +194,27 @@ export class CatalogService {
     return new Map(rows.map((r) => [r.slug, r]));
   }
 
+  /**
+   * A size id is valid only when it belongs to the chosen brand or is a
+   * generic (brandId null) row — a client cannot pair any size with any brand
+   * (PR 13 review). Pass `brandId` null to accept generic sizes only.
+   */
   async sizeById(
     m: EntityManager,
     id: string,
+    brandId: string | null,
   ): Promise<CatalogSizeEntity | null> {
-    return m.findOne(CatalogSizeEntity, { where: { id } });
+    const size = await m.findOne(CatalogSizeEntity, { where: { id } });
+    if (!size) return null;
+    if (size.brandId !== null && size.brandId !== brandId) return null;
+    return size;
   }
 
   /**
-   * Silent product match (F3-D7): brand + model (case-insensitive) narrowed by
-   * colour and size when they match. Never an error — null on a miss.
+   * Silent product match (F3-D7): brand + model (case-insensitive), and at
+   * least one of colour or size must agree — msrp only breaks ties, it never
+   * qualifies a candidate on its own (PR 13 review). Never an error — null on
+   * a miss. Candidates come back in sku order so ties are deterministic.
    */
   async matchProduct(
     m: EntityManager,
@@ -218,6 +229,7 @@ export class CatalogService {
       .createQueryBuilder('p')
       .where('p."brandId" = :brandId AND p."isActive" = true', { brandId })
       .andWhere('LOWER(p.model) = LOWER(:model)', { model: model.trim() })
+      .orderBy('p.sku', 'ASC')
       .limit(200)
       .getMany();
     if (candidates.length === 0) return null;
@@ -229,6 +241,7 @@ export class CatalogService {
       let score = 0;
       if (c && p.colour && p.colour.toLowerCase().includes(c)) score += 2;
       if (s && p.size === s) score += 1;
+      if (score === 0) continue; // no colour / size evidence → not this SKU
       if (p.msrp !== null) score += 0.5;
       if (score > bestScore) {
         best = p;

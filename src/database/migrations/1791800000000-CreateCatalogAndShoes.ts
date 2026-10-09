@@ -137,6 +137,11 @@ export class CreateCatalogAndShoes1791800000000 implements MigrationInterface {
     await q.query(
       `CREATE INDEX "IDX_catalog_products_brand_size" ON "catalog_products" ("brandId", "size")`,
     );
+    // matchProduct and listColours filter on LOWER(model); the plain index
+    // above cannot serve that once a brand holds tens of thousands of SKUs.
+    await q.query(
+      `CREATE INDEX "IDX_catalog_products_brand_lower_model" ON "catalog_products" ("brandId", LOWER("model"))`,
+    );
     await q.query(`
       CREATE TABLE "catalog_sizes" (
         "id"        uuid                   NOT NULL DEFAULT uuid_generate_v4(),

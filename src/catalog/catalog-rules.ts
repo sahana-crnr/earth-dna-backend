@@ -280,10 +280,15 @@ export function importProducts(rows: readonly ProductRow[]): {
 export function sizesByBrand(
   products: readonly { brandSlug: string; size: string | null }[],
 ): Map<string, string[]> {
-  const acc = new Map<string, string[]>();
+  const acc = new Map<string, Set<string>>();
   for (const p of products) {
     if (!p.size) continue;
-    acc.set(p.brandSlug, [...(acc.get(p.brandSlug) ?? []), p.size]);
+    let set = acc.get(p.brandSlug);
+    if (!set) {
+      set = new Set<string>();
+      acc.set(p.brandSlug, set);
+    }
+    set.add(p.size);
   }
-  return new Map([...acc].map(([k, v]) => [k, sizeOrder(v)]));
+  return new Map([...acc].map(([k, v]) => [k, sizeOrder([...v])]));
 }

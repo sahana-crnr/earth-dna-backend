@@ -19,10 +19,10 @@ export interface StorageConfig {
   forcePathStyle: boolean;
   region: string;
   /**
-   * Credentials sent ONLY when `endpoint` is set (local emulator). Dummy by
-   * default so a developer's real AWS profile never reaches the emulator; MinIO
-   * needs a real pair (8+ char secret), hence configurable. Ignored on dev/prod,
-   * where the SDK uses the task role.
+   * Credentials sent ONLY when `endpoint` is set (local emulator). Dummy
+   * `test`/`test` by default so a developer's real AWS profile never reaches
+   * the emulator; configurable for emulators that check them. Ignored on
+   * dev/prod, where the SDK uses the task role.
    */
   accessKey: string;
   secretKey: string;

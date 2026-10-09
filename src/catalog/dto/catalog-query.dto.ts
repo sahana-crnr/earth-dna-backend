@@ -1,6 +1,6 @@
 // Query parameters of the catalog list routes. `q` is capped at 50 characters
 // and every id is a v4 UUID, as the global ValidationPipe enforces them.
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class BrandsQueryDto {
@@ -22,7 +22,7 @@ export class SizesQueryDto {
 }
 
 export class ModelsQueryDto {
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiProperty({ format: 'uuid' })
   @IsUUID('4')
   brandId: string;
 
@@ -34,7 +34,7 @@ export class ModelsQueryDto {
 }
 
 export class ColoursQueryDto {
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiProperty({ format: 'uuid' })
   @IsUUID('4')
   brandId: string;
 

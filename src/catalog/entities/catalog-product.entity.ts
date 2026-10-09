@@ -19,6 +19,9 @@ import { CatalogBrandEntity } from './catalog-brand.entity';
 @Unique('UQ_catalog_products_sku', ['sku'])
 @Index('IDX_catalog_products_brand_model', ['brandId', 'model'])
 @Index('IDX_catalog_products_brand_size', ['brandId', 'size'])
+// Expression index created by the migration; TypeORM cannot express it, so it
+// is declared only to keep migration:generate from dropping it.
+@Index('IDX_catalog_products_brand_lower_model', { synchronize: false })
 export class CatalogProductEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

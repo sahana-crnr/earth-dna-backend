@@ -223,12 +223,14 @@ export class ScanService {
    * empty scan" case, 2026-10-07). A processed session is never deleted
    * (409 NOT_DRAFT); a draft that already holds a shoe answers 409
    * SCAN_NOT_EMPTY so photos are never dropped by accident — remove the shoes
-   * first (E5). Row lock keeps a concurrent "add shoe" from racing the delete.
+   * first (E5). An empty session the abandon job already flipped to
+   * `abandoned` may also go, otherwise it would be stuck forever. Row lock
+   * keeps a concurrent "add shoe" from racing the delete.
    */
   async deleteEmptyDraft(userId: string, scanId: string): Promise<void> {
     await this.dataSource.transaction(async (m) => {
       const scan = await findOwnedScan(m, userId, scanId, true);
-      assertDraft(scan);
+      if (scan.status !== 'abandoned') assertDraft(scan);
       const shoes = await m.count(ScanShoeEntity, {
         where: { scanId: scan.id },
       });

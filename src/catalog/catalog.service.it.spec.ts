@@ -214,8 +214,15 @@ d('CatalogService (integration, real Postgres)', () => {
     expect(svc.options().genders).toEqual(['men', 'women', 'unisex', 'kids']);
   });
 
-  it('resolution: by id (active only), by name slug, bulk by names', async () => {
+  it('resolution: by id (active only), by name slug, bulk by names, size scoped to brand', async () => {
     const m = ds.manager;
+    const zetaSize = (await svc.listSizes(zeta.id)).items[0];
+    expect((await svc.sizeById(m, zetaSize.id, zeta.id))?.id).toBe(zetaSize.id);
+    expect(await svc.sizeById(m, zetaSize.id, alpha.id)).toBeNull();
+    expect(await svc.sizeById(m, zetaSize.id, null)).toBeNull();
+    const generic = (await svc.listSizes()).items[0];
+    expect((await svc.sizeById(m, generic.id, zeta.id))?.id).toBe(generic.id);
+    expect((await svc.sizeById(m, generic.id, null))?.id).toBe(generic.id);
     expect((await svc.brandById(m, zeta.id))?.id).toBe(zeta.id);
     expect(await svc.brandById(m, inactive.id)).toBeNull();
     expect((await svc.brandByName(m, `${TAG} ZETA`))?.id).toBe(zeta.id);
@@ -231,6 +238,13 @@ d('CatalogService (integration, real Postgres)', () => {
     ).toBeNull();
     expect(await svc.matchProduct(m, zeta.id, null, null, null)).toBeNull();
     expect(await svc.matchProduct(m, zeta.id, 'nope', null, null)).toBeNull();
+    // model alone is not enough: no colour / size evidence → no product, no msrp
+    expect(
+      await svc.matchProduct(m, zeta.id, 'Trail Runner', null, null),
+    ).toBeNull();
+    expect(
+      await svc.matchProduct(m, zeta.id, 'Trail Runner', 'pink', '13'),
+    ).toBeNull();
     expect(
       (await svc.matchProduct(m, zeta.id, 'trail runner', 'olive', null))?.sku,
     ).toBe(`${TAG}-2`);

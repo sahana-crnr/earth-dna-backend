@@ -386,6 +386,16 @@ d('ScanService (integration, real Postgres)', () => {
     expect(await code(service.deleteEmptyDraft(userId, done.id))).toBe(
       'NOT_DRAFT',
     );
+
+    // an empty session the abandon job flipped may still be discarded
+    const stale = await service.createDraft(userId);
+    await ds.query(
+      `UPDATE scans SET "updatedAt" = now() - interval '31 days' WHERE id = $1`,
+      [stale.id],
+    );
+    await service.abandonStaleDrafts();
+    await service.deleteEmptyDraft(userId, stale.id);
+    expect(await code(service.get(userId, stale.id))).toBe('SCAN_NOT_FOUND');
   });
 
   it('another user cannot see or change the scan (404, IDOR)', async () => {

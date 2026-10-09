@@ -119,14 +119,21 @@ export class ScanReviewService {
           'Unknown or inactive brand id',
         );
       }
+      // Brand is settled before the size so the size can be checked against it.
+      const predictedBrandRow =
+        brandRow ?? (await this.catalog.brandByName(m, result.brand));
       const sizeRow = dto.sizeId
-        ? await this.catalog.sizeById(m, dto.sizeId)
+        ? await this.catalog.sizeById(
+            m,
+            dto.sizeId,
+            predictedBrandRow?.id ?? null,
+          )
         : null;
       if (dto.sizeId && !sizeRow) {
         throw new ApiError(
           HttpStatus.BAD_REQUEST,
           'UNKNOWN_SIZE',
-          'Unknown size id',
+          'Unknown size id, or the size does not belong to the chosen brand',
         );
       }
 
@@ -176,8 +183,7 @@ export class ScanReviewService {
         mode === 'reject' ||
         brandCorrected(result.brand, brandRow?.name ?? null);
       // Brand id: the body's, else the predicted brand matched to the catalog.
-      const resolvedBrand =
-        brandRow ?? (await this.catalog.brandByName(m, identity.brand));
+      const resolvedBrand = brandRow ?? predictedBrandRow;
 
       // ─── silent product match (F3-D7) ──────────────────────────────────
       const product = await this.catalog.matchProduct(
@@ -258,9 +264,11 @@ export class ScanReviewService {
         { id: shoe.id },
         { status: mode === 'confirm' ? 'confirmed' : 'rejected' },
       );
+      // One read of the session's shoes serves both the completion check and
+      // the response view (PR 13 review: no second scan_shoes query).
       const all = await m.find(ScanShoeEntity, {
         where: { scanId: scan.id },
-        select: { id: true, status: true },
+        order: { position: 'ASC' },
       });
       if (isCompleted(all) && scan.status !== 'completed') {
         await m.update(ScanEntity, { id: scan.id }, { status: 'completed' });
@@ -273,7 +281,7 @@ export class ScanReviewService {
       this.logger.log(
         `scan ${scan.id} shoe ${shoe.id} ${mode === 'confirm' ? 'confirmed' : 'rejected'} → my shoe ${saved.id}`,
       );
-      return this.builder.build(m, scan, false);
+      return this.builder.build(m, scan, false, all);
     });
   }
 }

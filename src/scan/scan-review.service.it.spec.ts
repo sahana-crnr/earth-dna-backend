@@ -350,7 +350,9 @@ d('ScanReviewService (integration, real Postgres)', () => {
     expect(e.myShoe?.valueSource).toBe('static');
     expect(e.myShoe?.recommendedAction).not.toBeNull();
     expect(e.myShoe?.thumbnailUrl).toMatch(/^fake:\/\/scans\/.*\/right-/);
-    expect(e.suggested).toEqual({ brandId: nike.id, brand: nike.name });
+    // the prefill is only computed while a shoe awaits review; afterwards
+    // myShoe carries the brand and suggested keeps just the predicted text
+    expect(e.suggested).toEqual({ brandId: null, brand: 'Nike' });
 
     const row = await entryFor(shoeIds[0]);
     expect(row?.userId).toBe(userId);
@@ -386,6 +388,28 @@ d('ScanReviewService (integration, real Postgres)', () => {
         reviews.confirm(userId, scanId, shoeIds[0], { sizeId: randomUUID() }),
       ),
     ).toBe('UNKNOWN_SIZE');
+    // a size that belongs to another brand is refused too (PR 13 review);
+    // the predicted brand here is Nike, size75 is an Adidas row
+    expect(
+      await code(
+        reviews.confirm(userId, scanId, shoeIds[0], { sizeId: size75.id }),
+      ),
+    ).toBe('UNKNOWN_SIZE');
+    // a generic size is always fine
+    const generic = await reviews.confirm(userId, scanId, shoeIds[0], {
+      sizeId: sizeGeneric.id,
+      model: 'Pegasus 40',
+    });
+    expect(generic.shoes[0].myShoe?.size.label).toBe('9');
+    // product match needs colour or size evidence: model alone → no product
+    expect((await entryFor(shoeIds[0]))?.catalogProductId).toBeNull();
+    await ds.getRepository(ShoeEntity).delete({ scanShoeId: shoeIds[0] });
+    await ds
+      .getRepository(ShoeFeedbackEntity)
+      .delete({ scanShoeId: shoeIds[0] });
+    await ds
+      .getRepository(ScanShoeEntity)
+      .update({ id: shoeIds[0] }, { status: 'identified' });
     const view = await reviews.confirm(userId, scanId, shoeIds[0], {
       brandId: adidas.id,
       model: 'Ultraboost 22',

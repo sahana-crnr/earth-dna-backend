@@ -13,6 +13,8 @@ import { ShoeEntity } from '../shoes/entities/shoe.entity';
 import { ScanEntity } from './entities/scan.entity';
 import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
+import { CatalogBrandEntity } from '../catalog/entities/catalog-brand.entity';
+import type { FindOptionsSelect } from 'typeorm';
 import {
   conditionLabelFor,
   matchPercent,
@@ -40,28 +42,51 @@ export class ScanResultsBuilder {
     this.cfg = config.get<ScanConfig>('scan')!;
   }
 
+  /**
+   * @param preloadedShoes the session's shoes when the caller already holds
+   *   them (the review transaction), ordered by position; else they are read.
+   */
   async build(
     m: EntityManager,
     scan: ScanEntity,
     includeRaw = false,
+    preloadedShoes?: ScanShoeEntity[],
   ): Promise<ScanResultsView> {
-    const shoes = await m.find(ScanShoeEntity, {
-      where: { scanId: scan.id },
-      order: { position: 'ASC' },
-    });
+    const shoes =
+      preloadedShoes ??
+      (await m.find(ScanShoeEntity, {
+        where: { scanId: scan.id },
+        order: { position: 'ASC' },
+      }));
     const ids = shoes.map((s) => s.id);
     const [results, entries] = ids.length
       ? await Promise.all([
-          m.find(ScanShoeResultEntity, { where: { scanShoeId: In(ids) } }),
+          // E11 is polled every ~2 s: leave the large `raw` jsonb out of the
+          // read unless the caller asked for it (PR 13 review).
+          m.find(ScanShoeResultEntity, {
+            where: { scanShoeId: In(ids) },
+            select: resultColumns(includeRaw),
+          }),
           m.find(ShoeEntity, { where: { scanShoeId: In(ids) } }),
         ])
       : [[], []];
     const resultByShoe = new Map(results.map((r) => [r.scanShoeId, r]));
     const entryByShoe = new Map(entries.map((e) => [e.scanShoeId, e]));
-    const brands = await this.catalog.brandsByNames(
-      m,
-      results.map((r) => r.brand),
+    // The brand prefill is only needed for shoes still waiting for a review;
+    // once every shoe is reviewed (or nothing is identified) skip the query.
+    const needsSuggestion = shoes.some(
+      (s) =>
+        reviewStateFor(s.status) === null &&
+        resultByShoe.get(s.id)?.brand != null,
     );
+    const brands = needsSuggestion
+      ? await this.catalog.brandsByNames(
+          m,
+          shoes
+            .filter((s) => reviewStateFor(s.status) === null)
+            .map((s) => resultByShoe.get(s.id)?.brand ?? null),
+        )
+      : new Map<string, CatalogBrandEntity>();
 
     // Thumbnail signing is the only async step per shoe; run them together.
     const views: ShoeResultEntryView[] = await Promise.all(
@@ -140,6 +165,33 @@ export class ScanResultsBuilder {
   }
 }
 
+/** Every result column except `raw`, which is added only on request. */
+function resultColumns(
+  includeRaw: boolean,
+): FindOptionsSelect<ScanShoeResultEntity> {
+  return {
+    id: true,
+    scanShoeId: true,
+    source: true,
+    outcome: true,
+    modelVersion: true,
+    brand: true,
+    subBrand: true,
+    model: true,
+    colorway: true,
+    category: true,
+    subCategory: true,
+    material: true,
+    confidence: true,
+    conditionCode: true,
+    candidates: true,
+    submittedAt: true,
+    createdAt: true,
+    updatedAt: true,
+    ...(includeRaw ? { raw: true } : {}),
+  };
+}
+
 /** Entity → response. The label and matchPercent are derived, never stored.
  *  `raw` is spread in only when asked for, so the key is absent rather than
  *  null when it was simply not requested. */
@@ -165,7 +217,7 @@ export function toResultView(
       label: conditionLabelFor(row.conditionCode),
     },
     candidates: row.candidates ?? [],
-    ...(includeRaw ? { raw: row.raw } : {}),
+    ...(includeRaw ? { raw: row.raw ?? null } : {}),
     submittedAt: new Date(row.submittedAt).toISOString(),
     updatedAt: new Date(row.updatedAt).toISOString(),
   };

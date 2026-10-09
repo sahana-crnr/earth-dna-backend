@@ -1,7 +1,7 @@
 // F3 catalog endpoints E14–E19: the dropdown sources for the review form.
 // JWT-protected like every scan route (Q14-A); read-only; per-route throttle
 // above the global default because a form opens several lists at once.
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Header, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -19,6 +19,10 @@ import {
   SizesQueryDto,
 } from './dto/catalog-query.dto';
 
+/** Catalog data changes only when the seed runs; the app may cache each list
+ *  for five minutes (private: the responses sit behind a user token). */
+const CACHE = 'private, max-age=300';
+
 @ApiTags('Catalog (F3)')
 @ApiBearerAuth('access-token')
 @ApiResponse({ status: 401, description: 'Missing or invalid access token' })
@@ -29,12 +33,14 @@ export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}
 
   @Get('brands')
+  @Header('Cache-Control', CACHE)
   @ApiOperation({ summary: 'E14 — brands, A→Z, optional ?q= prefix search' })
   brands(@Query() q: BrandsQueryDto) {
     return this.catalog.listBrands(q.q);
   }
 
   @Get('sizes')
+  @Header('Cache-Control', CACHE)
   @ApiOperation({
     summary: 'E15 — US sizes for a brand (?brandId=), generic list otherwise',
   })
@@ -43,6 +49,7 @@ export class CatalogController {
   }
 
   @Get('categories')
+  @Header('Cache-Control', CACHE)
   @CatalogEndpoint('categories')
   @ApiOperation({
     summary: 'E16 — categories with nested sub-categories (muted by default)',
@@ -53,6 +60,7 @@ export class CatalogController {
   }
 
   @Get('models')
+  @Header('Cache-Control', CACHE)
   @CatalogEndpoint('models')
   @ApiOperation({ summary: 'E17 — distinct models for a brand (?brandId=&q=)' })
   @ApiResponse({ status: 404, description: 'ENDPOINT_MUTED' })
@@ -61,6 +69,7 @@ export class CatalogController {
   }
 
   @Get('colours')
+  @Header('Cache-Control', CACHE)
   @CatalogEndpoint('colours')
   @ApiOperation({
     summary: 'E18 — distinct colours for a brand, optionally one model',
@@ -71,6 +80,7 @@ export class CatalogController {
   }
 
   @Get('options')
+  @Header('Cache-Control', CACHE)
   @CatalogEndpoint('options')
   @ApiOperation({ summary: 'E19 — static lists: genders' })
   @ApiResponse({ status: 404, description: 'ENDPOINT_MUTED' })

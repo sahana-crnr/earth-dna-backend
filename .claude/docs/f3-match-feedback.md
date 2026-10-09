@@ -88,7 +88,7 @@ Size normalisation (source sizes are raw text: `8`, `8.5`, `10 Wide`, `9-10`, `M
 { "brandId": "uuid", "model": "Cloudmonster 2", "color": "Black", "sizeId": "uuid", "gender": "women" }
 ```
 Confirm: every field optional; the predicted brand, model and colour are used for whatever is absent. Reject: `brandId`, `model`, `color`, `sizeId` required; `gender` optional.
-Limits: model ≤ 150, color ≤ 100, trimmed; gender ∈ men, women, unisex, kids. Unknown or inactive ids → 400 `UNKNOWN_BRAND` / `UNKNOWN_SIZE`. Category, subCategory, condition and material are never in the body: they come from the F2 result.
+Limits: model ≤ 150, color ≤ 100, trimmed; gender ∈ men, women, unisex, kids. Unknown or inactive ids → 400 `UNKNOWN_BRAND` / `UNKNOWN_SIZE`. A size id must belong to the chosen brand or be a generic (brand-less) size; any other pairing is `UNKNOWN_SIZE`. Category, subCategory, condition and material are never in the body: they come from the F2 result.
 
 ### How the five fields are stored and returned
 | Field | Stored on `shoes` | Returned to the app |
@@ -98,7 +98,7 @@ Limits: model ≤ 150, color ≤ 100, trimmed; gender ∈ men, women, unisex, ki
 | color | `colorway` varchar(100) | `"color": "Black"` |
 | size | `sizeId` (FK catalog_sizes) + `size` text label | `"size": { "id": "uuid", "label": "7.5" }` |
 | gender | `gender` enum | `"gender": "women"` |
-Prefill for the form: the results view carries `suggested: { brandId, brand }` per shoe (ShoeDNA brand matched to the catalog by slug), so the dropdown can be preselected; the other four are empty.
+Prefill for the form: the results view carries `suggested: { brandId, brand }` per shoe (ShoeDNA brand matched to the catalog by slug) while the shoe awaits review, so the dropdown can be preselected; once reviewed `brandId` is null and `myShoe.brand` is the source. The other four fields are empty.
 
 ### Results view (E11 extended; also the response of E12 and E13)
 ```json
@@ -137,7 +137,7 @@ Muted catalog routes answer 404 `ENDPOINT_MUTED`. Error body: `{ statusCode, tim
 - **Feedback `original`** = the F2 result row as stored (brand, subBrand, model, colorway, confidence, conditionCode, modelVersion, candidates). **`answer`** = the resolved final fields. `type` = `corrected` for E13 and for an E12 that changed the brand, else `confirmed`.
 - **Placeholders** (`SHOE_VALUE_PLACEHOLDER=true`): `recommendedAction`, `resaleMin/Max`, `demandNote`, `recommendationReason`, `co2eKg` picked deterministically from the Figma option set by hashing the shoe id, so the same shoe always shows the same numbers; `valueSource = static`, `valueComputedAt = now`.
 - **Thumbnail**: key of the `SHOE_THUMBNAIL_VIEW` photo, else the first photo by view order.
-- **Catalog match**: after overlay, if brand + model (+ colour, + size label) match a `catalog_products` row, store `catalogProductId` and `msrp`; a miss stores nulls, never an error.
+- **Catalog match**: after overlay, candidates are the brand's products with the same model (case-insensitive, sku order). A candidate qualifies only when the colour or the size agrees; msrp only breaks ties. The best one gives `catalogProductId` and `msrp`; a miss stores nulls, never an error.
 - **Account deletion**: `ShoeReviewService.anonymiseForUser(userId)` sets `shoe_feedback.userId` null; `shoes` rows for the user are deleted; called by the future account-deletion flow before the user row goes.
 - **Catalog reads**: plain repository queries, `isActive = true`, ordered by name then id; results capped by `CATALOG_LIST_MAX`.
 
