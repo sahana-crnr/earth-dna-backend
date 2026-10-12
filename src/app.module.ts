@@ -1,5 +1,6 @@
 // Root module of the application. Wires together config, database, and all
-// feature modules (AuthModule, UserModule, ScanModule, CatalogModule).
+// feature modules (AuthModule, UserModule, ScanModule, CatalogModule,
+// ShoesModule).
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -25,6 +26,7 @@ import { MailModule } from './mail/mail.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ScanModule } from './scan/scan.module';
 import { CatalogModule } from './catalog/catalog.module';
+import { ShoesModule } from './shoes/shoes.module';
 
 @Module({
   imports: [
@@ -82,6 +84,8 @@ import { CatalogModule } from './catalog/catalog.module';
     ScanModule,
     // F3 catalog lookups for the review form dropdowns.
     CatalogModule,
+    // F4 + F6 My Shoes list, filters and summary.
+    ShoesModule,
   ],
   controllers: [AppController],
   providers: [
