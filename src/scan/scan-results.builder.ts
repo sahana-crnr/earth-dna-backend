@@ -2,14 +2,12 @@
 // inside whatever EntityManager the caller holds — a plain read for F2, the
 // review transaction for F3 — so a committed review is never reported from a
 // second, possibly stale, read. One builder, one shape (F3-D11).
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable } from '@nestjs/common';
 import { EntityManager, In } from 'typeorm';
 import { slugify } from '../catalog/catalog-rules';
 import { CatalogService } from '../catalog/catalog.service';
-import type { ScanConfig } from '../config/scan.config';
-import { PhotoStorage } from '../storage/photo-storage';
 import { ShoeEntity } from '../shoes/entities/shoe.entity';
+import { ShoeViewMapper } from '../shoes/shoe-view.mapper';
 import { ScanEntity } from './entities/scan.entity';
 import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
@@ -23,7 +21,6 @@ import {
 import { isUnknownBrand, reviewStateFor, reviewedCount } from './review-rules';
 import { labelFor } from './scan-rules';
 import type {
-  MyShoeView,
   ScanResultsView,
   ShoeResultEntryView,
   ShoeResultView,
@@ -31,16 +28,10 @@ import type {
 
 @Injectable()
 export class ScanResultsBuilder {
-  private readonly logger = new Logger(ScanResultsBuilder.name);
-  private readonly cfg: ScanConfig;
-
   constructor(
     private readonly catalog: CatalogService,
-    private readonly storage: PhotoStorage,
-    config: ConfigService,
-  ) {
-    this.cfg = config.get<ScanConfig>('scan')!;
-  }
+    private readonly shoeViews: ShoeViewMapper,
+  ) {}
 
   /**
    * @param preloadedShoes the session's shoes when the caller already holds
@@ -105,7 +96,7 @@ export class ScanResultsBuilder {
           result: row ? toResultView(row, includeRaw) : null,
           review: reviewStateFor(s.status),
           myShoeId: entry?.id ?? null,
-          myShoe: entry ? await this.toMyShoeView(entry) : null,
+          myShoe: entry ? await this.shoeViews.toMyShoeView(entry) : null,
           suggested: {
             brandId: suggestedBrand?.id ?? null,
             brand: suggestedBrand?.name ?? predicted,
@@ -120,48 +111,6 @@ export class ScanResultsBuilder {
       reviewed: reviewedCount(shoes),
       shoes: views,
     };
-  }
-
-  async toMyShoeView(e: ShoeEntity): Promise<MyShoeView> {
-    return {
-      id: e.id,
-      brand: { id: e.brandId, name: e.brand },
-      subBrand: e.subBrand,
-      category: e.category,
-      subCategory: e.subCategory,
-      model: e.model,
-      color: e.colorway,
-      size: { id: e.sizeId, label: e.size },
-      gender: e.gender,
-      condition: {
-        code: e.conditionCode,
-        label: conditionLabelFor(e.conditionCode),
-      },
-      material: e.material,
-      recommendedAction: e.recommendedAction,
-      resale: {
-        min: e.resaleMin,
-        max: e.resaleMax,
-        currency: e.resaleCurrency,
-      },
-      co2eKg: e.co2eKg,
-      valueSource: e.valueSource,
-      thumbnailUrl: e.primaryPhotoS3Key
-        ? await this.signOrNull(e.primaryPhotoS3Key)
-        : null,
-      createdAt: new Date(e.createdAt).toISOString(),
-    };
-  }
-
-  /** A signing failure (or no bucket configured) never fails a review. */
-  private async signOrNull(key: string): Promise<string | null> {
-    if (!this.storage.isConfigured()) return null;
-    try {
-      return await this.storage.signedGetUrl(key, this.cfg.photoUrlTtlSeconds);
-    } catch (err) {
-      this.logger.warn(`could not sign ${key}: ${String(err)}`);
-      return null;
-    }
   }
 }
 

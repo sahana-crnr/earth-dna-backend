@@ -3,15 +3,13 @@
 // so the app never has to know the mapping or the rounding.
 import type {
   ConditionCode,
-  Gender,
   IdentificationOutcome,
   IdentificationSource,
-  RecommendedAction,
   ResultStatus,
   ReviewState,
   ScanStatus,
-  ValueSource,
 } from './scan.types';
+import type { MyShoeView } from '../shoes/shoes.view';
 
 export interface ResultCandidateView {
   brand: string;
@@ -44,26 +42,9 @@ export interface ShoeResultView {
   updatedAt: string;
 }
 
-/** F3: the My Shoes entry a review created, as the app shows it back. */
-export interface MyShoeView {
-  id: string;
-  brand: { id: string | null; name: string };
-  subBrand: string | null;
-  category: string | null;
-  subCategory: string | null;
-  model: string | null;
-  color: string | null;
-  size: { id: string | null; label: string | null };
-  gender: Gender | null;
-  condition: { code: ConditionCode | null; label: string | null };
-  material: string | null;
-  recommendedAction: RecommendedAction | null;
-  resale: { min: number | null; max: number | null; currency: string };
-  co2eKg: number | null;
-  valueSource: ValueSource;
-  thumbnailUrl: string | null;
-  createdAt: string;
-}
+/** F3: the My Shoes entry a review created; the shape lives with the shoes
+ *  module, which F4 lists through the same mapper. */
+export type { MyShoeView };
 
 export interface ShoeResultEntryView {
   shoeId: string;

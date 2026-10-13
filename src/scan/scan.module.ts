@@ -1,5 +1,6 @@
 // F1 scan sessions + F2 identification results + F3 review: entities, services,
-// controllers, abandon job. F3 imports CatalogModule to resolve brand / size ids. Multer limits come from scan config so uploads are capped before
+// controllers, abandon job. F3 imports CatalogModule to resolve brand / size ids,
+// and ShoesModule for the My Shoes card mapper it shares with the F4 list. Multer limits come from scan config so uploads are capped before
 // bytes pile up in memory. F2 adds no Multer or storage dependency — results are
 // plain JSON and must keep working when SHOE_PHOTOS_BUCKET is unset.
 import { Module } from '@nestjs/common';
@@ -12,6 +13,7 @@ import type { ScanConfig } from '../config/scan.config';
 import { StorageModule } from '../storage/storage.module';
 import { CatalogModule } from '../catalog/catalog.module';
 import { ShoeEntity } from '../shoes/entities/shoe.entity';
+import { ShoesModule } from '../shoes/shoes.module';
 import { ScanEntity } from './entities/scan.entity';
 import { ScanPhotoEntity } from './entities/scan-photo.entity';
 import { ScanShoeEntity } from './entities/scan-shoe.entity';
@@ -31,6 +33,7 @@ import { ScanReviewService } from './scan-review.service';
     AuthModule,
     StorageModule,
     CatalogModule,
+    ShoesModule,
     TypeOrmModule.forFeature([
       ScanEntity,
       ScanShoeEntity,
