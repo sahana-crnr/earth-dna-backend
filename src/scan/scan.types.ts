@@ -65,7 +65,14 @@ export type Gender = (typeof GENDERS)[number];
 
 /** What a review produced for training: the prediction stood, or the user
  *  corrected it (F3-D14). Written once per review, never updated. */
-export const FEEDBACK_TYPES = ['confirmed', 'corrected'] as const;
+/** F3: confirmed / corrected at review. F5: condition_suggested (E30),
+ *  rescanned (review of a rescan shoe updates the entry in place). */
+export const FEEDBACK_TYPES = [
+  'confirmed',
+  'corrected',
+  'condition_suggested',
+  'rescanned',
+] as const;
 export type FeedbackType = (typeof FEEDBACK_TYPES)[number];
 
 /** Review state of a scan shoe as the app renders it; derived from
@@ -103,6 +110,21 @@ export type ResaleBucket = (typeof RESALE_BUCKETS)[number];
  *  ValueLens endpoint (F5/F7). */
 export const VALUE_SOURCES = ['static', 'valuelens'] as const;
 export type ValueSource = (typeof VALUE_SOURCES)[number];
+
+/** F5: where a My Shoes photo came from — copied from the scan on review, or
+ *  uploaded from the Edit screen. */
+export const SHOE_PHOTO_SOURCES = ['scan', 'upload'] as const;
+export type ShoePhotoSource = (typeof SHOE_PHOTO_SOURCES)[number];
+
+/** F5: the four rows of the Shoe Profile material table. */
+export const MATERIAL_PARTS = ['upper', 'midsole', 'outsole', 'laces'] as const;
+export type MaterialPart = (typeof MATERIAL_PARTS)[number];
+
+export function isActionTaken(v: unknown): v is ActionTaken {
+  return (
+    typeof v === 'string' && (ACTION_TAKEN as readonly string[]).includes(v)
+  );
+}
 
 export function isGender(v: unknown): v is Gender {
   return typeof v === 'string' && (GENDERS as readonly string[]).includes(v);

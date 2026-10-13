@@ -10,6 +10,7 @@ import { CatalogService } from '../catalog/catalog.service';
 import type { ScanConfig } from '../config/scan.config';
 import { PhotoStorage } from '../storage/photo-storage';
 import { ShoeEntity } from '../shoes/entities/shoe.entity';
+import { ShoePhotoEntity } from '../shoes/entities/shoe-photo.entity';
 import { ScanEntity } from './entities/scan.entity';
 import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
@@ -70,6 +71,17 @@ export class ScanResultsBuilder {
           m.find(ShoeEntity, { where: { scanShoeId: In(ids) } }),
         ])
       : [[], []];
+    // Primary photos of the entries, one query (F5-D17 replaced the copied key).
+    const primaryIds = entries
+      .map((e) => e.primaryPhotoId)
+      .filter((id): id is string => id !== null);
+    const primaries = primaryIds.length
+      ? await m.find(ShoePhotoEntity, {
+          where: { id: In(primaryIds) },
+          select: { id: true, s3Key: true },
+        })
+      : [];
+    const primaryKey = new Map(primaries.map((p) => [p.id, p.s3Key]));
     const resultByShoe = new Map(results.map((r) => [r.scanShoeId, r]));
     const entryByShoe = new Map(entries.map((e) => [e.scanShoeId, e]));
     // The brand prefill is only needed for shoes still waiting for a review;
@@ -105,7 +117,14 @@ export class ScanResultsBuilder {
           result: row ? toResultView(row, includeRaw) : null,
           review: reviewStateFor(s.status),
           myShoeId: entry?.id ?? null,
-          myShoe: entry ? await this.toMyShoeView(entry) : null,
+          myShoe: entry
+            ? await this.toMyShoeView(
+                entry,
+                entry.primaryPhotoId
+                  ? (primaryKey.get(entry.primaryPhotoId) ?? null)
+                  : null,
+              )
+            : null,
           suggested: {
             brandId: suggestedBrand?.id ?? null,
             brand: suggestedBrand?.name ?? predicted,
@@ -122,7 +141,10 @@ export class ScanResultsBuilder {
     };
   }
 
-  async toMyShoeView(e: ShoeEntity): Promise<MyShoeView> {
+  async toMyShoeView(
+    e: ShoeEntity,
+    primaryKey: string | null,
+  ): Promise<MyShoeView> {
     return {
       id: e.id,
       brand: { id: e.brandId, name: e.brand },
@@ -133,6 +155,7 @@ export class ScanResultsBuilder {
       color: e.colorway,
       size: { id: e.sizeId, label: e.size },
       gender: e.gender,
+      shoeType: { id: e.shoeTypeId, name: e.shoeType },
       condition: {
         code: e.conditionCode,
         label: conditionLabelFor(e.conditionCode),
@@ -144,11 +167,9 @@ export class ScanResultsBuilder {
         max: e.resaleMax,
         currency: e.resaleCurrency,
       },
-      co2eKg: e.co2eKg,
       valueSource: e.valueSource,
-      thumbnailUrl: e.primaryPhotoS3Key
-        ? await this.signOrNull(e.primaryPhotoS3Key)
-        : null,
+      thumbnailUrl: primaryKey ? await this.signOrNull(primaryKey) : null,
+      primaryPhotoId: e.primaryPhotoId,
       createdAt: new Date(e.createdAt).toISOString(),
     };
   }

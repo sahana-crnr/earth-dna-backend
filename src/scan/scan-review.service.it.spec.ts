@@ -19,10 +19,16 @@ import { CatalogService } from '../catalog/catalog.service';
 import { CatalogBrandEntity } from '../catalog/entities/catalog-brand.entity';
 import { CatalogCategoryEntity } from '../catalog/entities/catalog-category.entity';
 import { CatalogProductEntity } from '../catalog/entities/catalog-product.entity';
+import { CatalogShoeTypeEntity } from '../catalog/entities/catalog-shoe-type.entity';
 import { CatalogSizeEntity } from '../catalog/entities/catalog-size.entity';
 import type { CatalogConfig } from '../config/catalog.config';
+import type { ShoesConfig } from '../config/shoes.config';
 import type { ScanConfig } from '../config/scan.config';
 import { ShoeEntity } from '../shoes/entities/shoe.entity';
+import { ShoePhotoEntity } from '../shoes/entities/shoe-photo.entity';
+import { ShoesService } from '../shoes/shoes.service';
+import { SHOE_VALUE_PROVIDER } from '../shoes/value/shoe-value.provider';
+import { StaticValueProvider } from '../shoes/value/static-value.provider';
 import { ScanEntity } from './entities/scan.entity';
 import { ScanPhotoEntity } from './entities/scan-photo.entity';
 import { ScanShoeEntity } from './entities/scan-shoe.entity';
@@ -78,6 +84,13 @@ const CATALOG_CFG: CatalogConfig = {
   mutedEndpoints: [],
   listMax: 500,
   source: null,
+};
+const SHOES_CFG: ShoesConfig = {
+  maxPhotos: 8,
+  photoUrlTtlSeconds: 60,
+  shareBaseUrl: null,
+  shareTokenRandomChars: 6,
+  uploadPrefix: 'shoes',
 };
 
 const RESULT: SubmitShoeResultDto = {
@@ -175,6 +188,7 @@ d('ScanReviewService (integration, real Postgres)', () => {
           logging: false,
         }),
         TypeOrmModule.forFeature([
+          CatalogShoeTypeEntity,
           ScanEntity,
           ScanShoeEntity,
           ScanPhotoEntity,
@@ -193,12 +207,21 @@ d('ScanReviewService (integration, real Postgres)', () => {
         ScanResultsBuilder,
         ScanReviewService,
         CatalogService,
+        ShoesService,
+        StaticValueProvider,
+        { provide: SHOE_VALUE_PROVIDER, useExisting: StaticValueProvider },
         { provide: PhotoStorage, useValue: new FakeStorage() },
         {
           provide: ConfigService,
           useValue: {
             get: (k: string) =>
-              k === 'scan' ? CFG : k === 'catalog' ? CATALOG_CFG : undefined,
+              k === 'scan'
+                ? CFG
+                : k === 'catalog'
+                  ? CATALOG_CFG
+                  : k === 'shoes'
+                    ? SHOES_CFG
+                    : undefined,
           },
         },
       ],
@@ -356,7 +379,17 @@ d('ScanReviewService (integration, real Postgres)', () => {
 
     const row = await entryFor(shoeIds[0]);
     expect(row?.userId).toBe(userId);
-    expect(row?.primaryPhotoS3Key).toContain('/right-');
+    const primary = await ds
+      .getRepository(ShoePhotoEntity)
+      .findOneByOrFail({ id: row!.primaryPhotoId! });
+    expect(primary.s3Key).toContain('/right-');
+    expect(primary.source).toBe('scan');
+    expect(primary.view).toBe('right');
+    expect(
+      await ds
+        .getRepository(ShoePhotoEntity)
+        .count({ where: { shoeId: row!.id } }),
+    ).toBe(4);
     const fb = await feedbackFor(shoeIds[0]);
     expect(fb).toHaveLength(1);
     expect(fb[0].type).toBe('confirmed');

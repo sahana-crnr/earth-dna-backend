@@ -18,7 +18,8 @@ export class ConditionMappingEntity {
   @Column({ type: 'varchar', length: 40 })
   label: string;
 
-  @Column({ type: 'char', length: 1 })
+  /** Designer's grade: A+, A, B, C (four grades since 2026-10-12, F3.1). */
+  @Column({ type: 'varchar', length: 2 })
   gradeLetter: string;
 
   @Column({ type: 'varchar', length: 120 })

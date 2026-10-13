@@ -166,7 +166,8 @@ export function missingFields(
   });
 }
 
-// ─── F3-P4: value placeholders (until ValueLens + CircularSort exist) ────────
+// ─── F3-P4: value placeholders (until the ValueLens endpoint exists) ────────
+// CO2e / carbon footprint is out of scope (decided 2026-10-09, tracker T28).
 
 export interface ValuePlaceholder {
   recommendedAction: RecommendedAction;
@@ -175,7 +176,6 @@ export interface ValuePlaceholder {
   resaleBucket: ResaleBucket | null;
   demandNote: string | null;
   recommendationReason: string;
-  co2eKg: number;
 }
 
 /** Exactly the option set the Figma shows (My Shoes cards + Shoe Profile). */
@@ -188,7 +188,6 @@ export const VALUE_PLACEHOLDERS: readonly ValuePlaceholder[] = [
     demandNote: 'High demand silhouette',
     recommendationReason:
       'Due to high demand and exceptional condition, keeping this pair in circulation maximizes value.',
-    co2eKg: 12.4,
   },
   {
     recommendedAction: 'repair',
@@ -198,7 +197,6 @@ export const VALUE_PLACEHOLDERS: readonly ValuePlaceholder[] = [
     demandNote: null,
     recommendationReason:
       'A small repair restores most of the resale value of this pair.',
-    co2eKg: 9.8,
   },
   {
     recommendedAction: 'resell',
@@ -208,7 +206,6 @@ export const VALUE_PLACEHOLDERS: readonly ValuePlaceholder[] = [
     demandNote: 'Steady demand',
     recommendationReason:
       'Good condition and steady demand make resale the best next step.',
-    co2eKg: 11.2,
   },
   {
     recommendedAction: 'recycle',
@@ -218,7 +215,6 @@ export const VALUE_PLACEHOLDERS: readonly ValuePlaceholder[] = [
     demandNote: null,
     recommendationReason:
       'Wear is beyond resale or repair; recycling recovers the materials.',
-    co2eKg: 6.5,
   },
 ];
 

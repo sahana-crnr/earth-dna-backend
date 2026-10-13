@@ -15,6 +15,7 @@ import { CatalogService } from './catalog.service';
 import { CatalogBrandEntity } from './entities/catalog-brand.entity';
 import { CatalogCategoryEntity } from './entities/catalog-category.entity';
 import { CatalogProductEntity } from './entities/catalog-product.entity';
+import { CatalogShoeTypeEntity } from './entities/catalog-shoe-type.entity';
 import { CatalogSizeEntity } from './entities/catalog-size.entity';
 import { CatalogSubcategoryEntity } from './entities/catalog-subcategory.entity';
 
@@ -49,6 +50,7 @@ d('CatalogService (integration, real Postgres)', () => {
           logging: false,
         }),
         TypeOrmModule.forFeature([
+          CatalogShoeTypeEntity,
           CatalogBrandEntity,
           CatalogCategoryEntity,
           CatalogSizeEntity,
@@ -191,6 +193,26 @@ d('CatalogService (integration, real Postgres)', () => {
     const view = await svc.listCategories();
     const mine = view.items.find((c) => c.id === cat.id)!;
     expect(mine.subcategories.map((s) => s.name)).toEqual(['Chelsea', 'Snow']);
+  });
+
+  it('E16 (F5): six shoe types in design order, each with its mapped categories', async () => {
+    const view = await svc.listShoeTypes();
+    expect(view.items.map((t) => t.slug)).toEqual([
+      'athletic-shoes',
+      'casual-shoes',
+      'dress-shoes',
+      'boots',
+      'sandals',
+      'slippers',
+    ]);
+    for (const t of view.items) expect(Array.isArray(t.categories)).toBe(true);
+    const bootsType = view.items.find((t) => t.slug === 'boots')!;
+    // the fixture category is typed by keyword once the seed maps it; here we
+    // map it by hand through the service helper
+    const mapped = await svc.shoeTypeForCategory(ds.manager, 'Hiking Boots');
+    expect(mapped?.id).toBe(bootsType.id);
+    expect(await svc.shoeTypeForCategory(ds.manager, null)).toBeNull();
+    expect(await svc.shoeTypeById(ds.manager, bootsType.id)).not.toBeNull();
   });
 
   it('E17 / E18 models and colours: distinct, active only, filtered', async () => {

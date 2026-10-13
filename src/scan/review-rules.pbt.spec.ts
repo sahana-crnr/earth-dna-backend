@@ -211,7 +211,6 @@ describe('F3-P4 placeholderFor', () => {
         expect(p.resaleMin).toBeLessThanOrEqual(p.resaleMax);
       }
       expect(p.resaleBucket).toBe(resaleBucketFor(p.resaleMax));
-      expect(p.co2eKg).toBeGreaterThan(0);
     }
   });
 

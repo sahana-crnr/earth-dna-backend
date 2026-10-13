@@ -19,8 +19,12 @@ import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { ApiError } from '../common/errors/api-error';
+import {
+  validateUploadedPhoto,
+  type UploadedPhoto,
+} from '../storage/photo-upload.rules';
 import type { PhotoType, ScanConfig } from '../config/scan.config';
 import {
   PhotoStorage,
@@ -32,7 +36,6 @@ import { ScanPhotoEntity } from './entities/scan-photo.entity';
 import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import {
   CONTENT_TYPE,
-  checkPhoto,
   computeShoeState,
   decideAlbumShoes,
   incompleteShoes,
@@ -60,12 +63,7 @@ import type {
   ScanSummaryView,
 } from './scan.view';
 
-/** Minimal file shape (subset of Express.Multer.File) the service needs. */
-export interface UploadedPhoto {
-  fieldname: string;
-  buffer: Buffer;
-  size: number;
-}
+export type { UploadedPhoto } from '../storage/photo-upload.rules';
 
 /** What a locked-transaction body hands back. */
 interface TxResult {
@@ -124,7 +122,10 @@ export class ScanService {
     limit: number,
     offset: number,
   ): Promise<ScanListView> {
-    const where = status ? { userId, status } : { userId };
+    // F5-D10: sessions whose every My Shoes entry was removed are hidden.
+    const where = status
+      ? { userId, status, hiddenAt: IsNull() }
+      : { userId, hiddenAt: IsNull() };
     const [rows, total] = await this.scans.findAndCount({
       where,
       // `id` tiebreaker keeps pages stable when updatedAt values collide.
@@ -730,34 +731,12 @@ export class ScanService {
     }
   }
 
+  /** Shared with F5 (E27): one rule for every photo upload. */
   private validatePhoto(file: UploadedPhoto | undefined): PhotoType {
-    const type = file ? sniffImageType(file.buffer) : null;
-    const rejection = checkPhoto(file ? { size: file.size, type } : undefined, {
+    return validateUploadedPhoto(file, {
       photoMaxBytes: this.cfg.photoMaxBytes,
       allowedTypes: this.cfg.photoAllowedTypes,
     });
-    if (rejection === 'FILE_REQUIRED') {
-      throw new ApiError(
-        HttpStatus.BAD_REQUEST,
-        'FILE_REQUIRED',
-        'A photo file is required',
-      );
-    }
-    if (rejection === 'FILE_TOO_LARGE') {
-      throw new ApiError(
-        HttpStatus.PAYLOAD_TOO_LARGE,
-        'FILE_TOO_LARGE',
-        `Photo must be at most ${this.cfg.photoMaxBytes} bytes`,
-      );
-    }
-    if (rejection === 'UNSUPPORTED_TYPE') {
-      throw new ApiError(
-        HttpStatus.UNSUPPORTED_MEDIA_TYPE,
-        'UNSUPPORTED_TYPE',
-        `Photo must be one of: ${this.cfg.photoAllowedTypes.join(', ')}`,
-      );
-    }
-    return type!;
   }
 
   private requireStorage(): void {

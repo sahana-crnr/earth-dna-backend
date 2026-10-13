@@ -55,13 +55,16 @@ export interface MyShoeView {
   color: string | null;
   size: { id: string | null; label: string | null };
   gender: Gender | null;
+  /** F5-D20: Figma shoe type when the ShoeDNA category mapped. */
+  shoeType: { id: string | null; name: string | null };
   condition: { code: ConditionCode | null; label: string | null };
   material: string | null;
   recommendedAction: RecommendedAction | null;
   resale: { min: number | null; max: number | null; currency: string };
-  co2eKg: number | null;
   valueSource: ValueSource;
+  /** Signed URL of the primary shoe_photos row (F5-D17); 1 h TTL on F5, F2/F3 TTL here. */
   thumbnailUrl: string | null;
+  primaryPhotoId: string | null;
   createdAt: string;
 }
 

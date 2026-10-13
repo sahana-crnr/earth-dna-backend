@@ -17,6 +17,7 @@ import {
   storageConfig,
   scanConfig,
   catalogConfig,
+  shoesConfig,
 } from './config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
@@ -25,6 +26,7 @@ import { MailModule } from './mail/mail.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ScanModule } from './scan/scan.module';
 import { CatalogModule } from './catalog/catalog.module';
+import { ShoesModule } from './shoes/shoes.module';
 
 @Module({
   imports: [
@@ -42,6 +44,7 @@ import { CatalogModule } from './catalog/catalog.module';
         storageConfig,
         scanConfig,
         catalogConfig,
+        shoesConfig,
       ],
       cache: true,
     }),
@@ -82,6 +85,9 @@ import { CatalogModule } from './catalog/catalog.module';
     ScanModule,
     // F3 catalog lookups for the review form dropdowns.
     CatalogModule,
+
+    // F5 — My Shoes profile, edit, photos, share, rescan, condition feedback
+    ShoesModule,
   ],
   controllers: [AppController],
   providers: [

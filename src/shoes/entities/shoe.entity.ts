@@ -1,7 +1,7 @@
 // "shoes" — the My Shoes entry, created by an F3 review (confirm or reject)
-// and read by F4 (list), F5 (profile) and F6 (home stats). The full F4/F5
-// schema is created now (F3-D13b) so later features add no migration for it;
-// F3 fills identity + placeholders and leaves the action / share columns alone.
+// and read by F4 (list), F5 (profile) and F6 (summary). F3 created the full
+// F4/F5 column set (F3-D13b); F5 added shoe type and the primary photo FK
+// (shoe_photos) and dropped co2eKg (F3.1).
 //
 // Identity is stored as id + text on purpose: `brandId` / `sizeId` keep the
 // dropdown round-trip, `brand` / `size` keep the display value even if the
@@ -37,6 +37,8 @@ import { ScanShoeEntity } from '../../scan/entities/scan-shoe.entity';
 import { CatalogBrandEntity } from '../../catalog/entities/catalog-brand.entity';
 import { CatalogSizeEntity } from '../../catalog/entities/catalog-size.entity';
 import { CatalogProductEntity } from '../../catalog/entities/catalog-product.entity';
+import { CatalogShoeTypeEntity } from '../../catalog/entities/catalog-shoe-type.entity';
+import { ShoePhotoEntity } from './shoe-photo.entity';
 
 const money = {
   to: (v: number | null) => v,
@@ -91,6 +93,21 @@ export class ShoeEntity {
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   subCategory: string | null;
+
+  // ─── shoe type (F5-D20): Figma display type, set on review when the ShoeDNA
+  // category maps, editable on the Edit screen ────────────────────────────
+  @Column({ type: 'uuid', nullable: true })
+  shoeTypeId: string | null;
+
+  @ManyToOne(() => CatalogShoeTypeEntity, { onDelete: 'SET NULL' })
+  @JoinColumn({
+    name: 'shoeTypeId',
+    foreignKeyConstraintName: 'FK_shoes_shoe_type',
+  })
+  shoeTypeRef?: CatalogShoeTypeEntity;
+
+  @Column({ type: 'varchar', length: 60, nullable: true })
+  shoeType: string | null;
 
   @Column({ type: 'varchar', length: 150, nullable: true })
   model: string | null;
@@ -204,15 +221,6 @@ export class ShoeEntity {
   recommendationReason: string | null;
 
   @Column({
-    type: 'numeric',
-    precision: 8,
-    scale: 2,
-    nullable: true,
-    transformer: money,
-  })
-  co2eKg: number | null;
-
-  @Column({
     type: 'enum',
     enum: VALUE_SOURCES,
     enumName: 'value_source',
@@ -226,9 +234,17 @@ export class ShoeEntity {
   @Column({ type: 'timestamptz', nullable: true })
   valueComputedAt: Date | null;
 
-  /** Copy of the chosen scan photo key for the card thumbnail (F3-D3). */
-  @Column({ type: 'varchar', length: 512, nullable: true })
-  primaryPhotoS3Key: string | null;
+  /** The card / profile hero photo: one of this shoe's shoe_photos rows
+   *  (F5-D17). Set on review (configured scan view), changeable on edit. */
+  @Column({ type: 'uuid', nullable: true })
+  primaryPhotoId: string | null;
+
+  @ManyToOne(() => ShoePhotoEntity, { onDelete: 'SET NULL' })
+  @JoinColumn({
+    name: 'primaryPhotoId',
+    foreignKeyConstraintName: 'FK_shoes_primary_photo',
+  })
+  primaryPhoto?: ShoePhotoEntity;
 
   /** "Remove Shoe" (F5) is a soft delete; feedback rows survive. */
   @Column({ type: 'timestamptz', nullable: true })

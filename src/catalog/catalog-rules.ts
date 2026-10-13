@@ -292,3 +292,87 @@ export function sizesByBrand(
   }
   return new Map([...acc].map(([k, v]) => [k, sizeOrder([...v])]));
 }
+
+// ─── F5-D20: product-DB category → Figma shoe type ───────────────────────────
+
+export const SHOE_TYPE_SLUGS = [
+  'athletic-shoes',
+  'casual-shoes',
+  'dress-shoes',
+  'boots',
+  'sandals',
+  'slippers',
+] as const;
+export type ShoeTypeSlug = (typeof SHOE_TYPE_SLUGS)[number];
+
+/** First keyword hit wins; order matters (boot before shoe, slipper before
+ *  sandal). Null when nothing matches — the category stays untyped. */
+const SHOE_TYPE_KEYWORDS: readonly [ShoeTypeSlug, readonly string[]][] = [
+  ['boots', ['boot', 'bootie', 'chelsea', 'hiking', 'work']],
+  ['slippers', ['slipper', 'mule', 'clog', 'house']],
+  ['sandals', ['sandal', 'slide', 'flip', 'thong', 'espadrille']],
+  [
+    'dress-shoes',
+    [
+      'dress',
+      'oxford',
+      'derby',
+      'loafer',
+      'brogue',
+      'pump',
+      'heel',
+      'formal',
+      'monk',
+    ],
+  ],
+  [
+    'athletic-shoes',
+    [
+      'athletic',
+      'running',
+      'sneaker',
+      'trainer',
+      'sport',
+      'basketball',
+      'tennis',
+      'golf',
+      'soccer',
+      'football',
+      'walking',
+      'trail',
+      'cross',
+      'fitness',
+      'gym',
+      'track',
+      'cleat',
+      'skate',
+      'cycling',
+    ],
+  ],
+  [
+    'casual-shoes',
+    [
+      'casual',
+      'fashion',
+      'flat',
+      'ballet',
+      'boat',
+      'deck',
+      'canvas',
+      'lifestyle',
+      'everyday',
+      'shoe',
+    ],
+  ],
+];
+
+export function shoeTypeFor(
+  categorySlugOrName: string | null,
+): ShoeTypeSlug | null {
+  const text = slugify(categorySlugOrName ?? '');
+  if (!text) return null;
+  for (const [type, words] of SHOE_TYPE_KEYWORDS) {
+    if (words.some((w) => text.includes(w))) return type;
+  }
+  return null;
+}
