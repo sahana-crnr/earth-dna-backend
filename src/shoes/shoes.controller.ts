@@ -5,7 +5,11 @@
 //
 // Route order matters: `summary` is declared before any `:shoeId` route F5
 // adds, or Express would match "summary" as a shoe id.
+//
+// Class-level 60/min throttle: the list signs up to 100 URLs per call, so the
+// global default is too loose; 60/min matches the F5 owner routes on /shoes.
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -21,6 +25,8 @@ import type { ShoeListView, ShoeSummaryView } from './shoes.view';
 @ApiTags('My Shoes (F4 + F6)')
 @ApiBearerAuth('access-token')
 @ApiResponse({ status: 401, description: 'Missing or invalid access token' })
+@ApiResponse({ status: 429, description: 'Too many requests' })
+@Throttle({ default: { limit: 60, ttl: 60000 } })
 @UseGuards(JwtAuthGuard)
 @Controller('shoes')
 export class ShoesController {
