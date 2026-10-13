@@ -22,6 +22,7 @@ import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
 import { ScanService } from './scan.service';
 import { ScanResultService } from './scan-result.service';
 import { ScanResultsBuilder } from './scan-results.builder';
+import { ShoeViewMapper } from '../shoes/shoe-view.mapper';
 import { CatalogService } from '../catalog/catalog.service';
 import { CatalogBrandEntity } from '../catalog/entities/catalog-brand.entity';
 import { CatalogCategoryEntity } from '../catalog/entities/catalog-category.entity';
@@ -187,6 +188,7 @@ d('ScanResultService (integration, real Postgres)', () => {
         ScanService,
         ScanResultService,
         ScanResultsBuilder,
+        ShoeViewMapper,
         CatalogService,
         { provide: PhotoStorage, useValue: storage },
         {

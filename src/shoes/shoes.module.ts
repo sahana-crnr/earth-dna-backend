@@ -1,4 +1,5 @@
-// F5 My Shoes: profile, edit, photos, share, rescan, condition feedback. Also
+// F4 + F6 (list, summary — Nawaz) and F5 (profile, edit, photos, share, rescan,
+// condition feedback) My Shoes. Also
 // owns the ShoeValueProvider binding (static placeholder today) and the two
 // hooks ScanModule's review transaction calls, so ScanModule imports this
 // module and never the other way round (no cycle).
@@ -19,6 +20,9 @@ import { ShoeEntity } from './entities/shoe.entity';
 import { ShoePhotoEntity } from './entities/shoe-photo.entity';
 import { ShoeShareEntity } from './entities/shoe-share.entity';
 import { ShareController } from './share.controller';
+import { ShoeViewMapper } from './shoe-view.mapper';
+import { ShoesListController } from './shoes-list.controller';
+import { ShoesListService } from './shoes-list.service';
 import { ShoesController } from './shoes.controller';
 import { ShoesService } from './shoes.service';
 import { SHOE_VALUE_PROVIDER } from './value/shoe-value.provider';
@@ -56,12 +60,16 @@ import { StaticValueProvider } from './value/static-value.provider';
       },
     }),
   ],
-  controllers: [ShoesController, ShareController],
+  // ShoesListController first: its GET /shoes/summary must be matched before
+  // ShoesController's GET /shoes/:shoeId.
+  controllers: [ShoesListController, ShoesController, ShareController],
   providers: [
+    ShoesListService,
+    ShoeViewMapper,
     ShoesService,
     StaticValueProvider,
     { provide: SHOE_VALUE_PROVIDER, useExisting: StaticValueProvider },
   ],
-  exports: [ShoesService, SHOE_VALUE_PROVIDER],
+  exports: [ShoesService, ShoeViewMapper, SHOE_VALUE_PROVIDER],
 })
 export class ShoesModule {}

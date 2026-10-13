@@ -37,6 +37,7 @@ import { ShoeFeedbackEntity } from './entities/shoe-feedback.entity';
 import { ScanService } from './scan.service';
 import { ScanResultService } from './scan-result.service';
 import { ScanResultsBuilder } from './scan-results.builder';
+import { ShoeViewMapper } from '../shoes/shoe-view.mapper';
 import { ScanReviewService } from './scan-review.service';
 import { SHOE_VIEWS } from './scan.types';
 import type { SubmitShoeResultDto } from './dto/submit-shoe-result.dto';
@@ -205,6 +206,7 @@ d('ScanReviewService (integration, real Postgres)', () => {
         ScanService,
         ScanResultService,
         ScanResultsBuilder,
+        ShoeViewMapper,
         ScanReviewService,
         CatalogService,
         ShoesService,

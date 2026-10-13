@@ -40,6 +40,7 @@ import type { SubmitShoeResultDto } from '../scan/dto/submit-shoe-result.dto';
 import { ShoeEntity } from './entities/shoe.entity';
 import { ShoePhotoEntity } from './entities/shoe-photo.entity';
 import { ShoeShareEntity } from './entities/shoe-share.entity';
+import { ShoeViewMapper } from './shoe-view.mapper';
 import { ShoesService } from './shoes.service';
 import { SHOE_VALUE_PROVIDER } from './value/shoe-value.provider';
 import { StaticValueProvider } from './value/static-value.provider';
@@ -212,6 +213,7 @@ d('ShoesService (integration, real Postgres)', () => {
         ScanReviewService,
         CatalogService,
         ShoesService,
+        ShoeViewMapper,
         StaticValueProvider,
         { provide: SHOE_VALUE_PROVIDER, useExisting: StaticValueProvider },
         { provide: PhotoStorage, useValue: storage },

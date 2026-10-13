@@ -2,15 +2,12 @@
 // inside whatever EntityManager the caller holds — a plain read for F2, the
 // review transaction for F3 — so a committed review is never reported from a
 // second, possibly stale, read. One builder, one shape (F3-D11).
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable } from '@nestjs/common';
 import { EntityManager, In } from 'typeorm';
 import { slugify } from '../catalog/catalog-rules';
 import { CatalogService } from '../catalog/catalog.service';
-import type { ScanConfig } from '../config/scan.config';
-import { PhotoStorage } from '../storage/photo-storage';
 import { ShoeEntity } from '../shoes/entities/shoe.entity';
-import { ShoePhotoEntity } from '../shoes/entities/shoe-photo.entity';
+import { ShoeViewMapper } from '../shoes/shoe-view.mapper';
 import { ScanEntity } from './entities/scan.entity';
 import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
@@ -24,7 +21,6 @@ import {
 import { isUnknownBrand, reviewStateFor, reviewedCount } from './review-rules';
 import { labelFor } from './scan-rules';
 import type {
-  MyShoeView,
   ScanResultsView,
   ShoeResultEntryView,
   ShoeResultView,
@@ -32,16 +28,10 @@ import type {
 
 @Injectable()
 export class ScanResultsBuilder {
-  private readonly logger = new Logger(ScanResultsBuilder.name);
-  private readonly cfg: ScanConfig;
-
   constructor(
     private readonly catalog: CatalogService,
-    private readonly storage: PhotoStorage,
-    config: ConfigService,
-  ) {
-    this.cfg = config.get<ScanConfig>('scan')!;
-  }
+    private readonly shoeViews: ShoeViewMapper,
+  ) {}
 
   /**
    * @param preloadedShoes the session's shoes when the caller already holds
@@ -72,16 +62,7 @@ export class ScanResultsBuilder {
         ])
       : [[], []];
     // Primary photos of the entries, one query (F5-D17 replaced the copied key).
-    const primaryIds = entries
-      .map((e) => e.primaryPhotoId)
-      .filter((id): id is string => id !== null);
-    const primaries = primaryIds.length
-      ? await m.find(ShoePhotoEntity, {
-          where: { id: In(primaryIds) },
-          select: { id: true, s3Key: true },
-        })
-      : [];
-    const primaryKey = new Map(primaries.map((p) => [p.id, p.s3Key]));
+    const primaryKey = await this.shoeViews.primaryKeysFor(m, entries);
     const resultByShoe = new Map(results.map((r) => [r.scanShoeId, r]));
     const entryByShoe = new Map(entries.map((e) => [e.scanShoeId, e]));
     // The brand prefill is only needed for shoes still waiting for a review;
@@ -118,7 +99,7 @@ export class ScanResultsBuilder {
           review: reviewStateFor(s.status),
           myShoeId: entry?.id ?? null,
           myShoe: entry
-            ? await this.toMyShoeView(
+            ? await this.shoeViews.toMyShoeView(
                 entry,
                 entry.primaryPhotoId
                   ? (primaryKey.get(entry.primaryPhotoId) ?? null)
@@ -139,50 +120,6 @@ export class ScanResultsBuilder {
       reviewed: reviewedCount(shoes),
       shoes: views,
     };
-  }
-
-  async toMyShoeView(
-    e: ShoeEntity,
-    primaryKey: string | null,
-  ): Promise<MyShoeView> {
-    return {
-      id: e.id,
-      brand: { id: e.brandId, name: e.brand },
-      subBrand: e.subBrand,
-      category: e.category,
-      subCategory: e.subCategory,
-      model: e.model,
-      color: e.colorway,
-      size: { id: e.sizeId, label: e.size },
-      gender: e.gender,
-      shoeType: { id: e.shoeTypeId, name: e.shoeType },
-      condition: {
-        code: e.conditionCode,
-        label: conditionLabelFor(e.conditionCode),
-      },
-      material: e.material,
-      recommendedAction: e.recommendedAction,
-      resale: {
-        min: e.resaleMin,
-        max: e.resaleMax,
-        currency: e.resaleCurrency,
-      },
-      valueSource: e.valueSource,
-      thumbnailUrl: primaryKey ? await this.signOrNull(primaryKey) : null,
-      primaryPhotoId: e.primaryPhotoId,
-      createdAt: new Date(e.createdAt).toISOString(),
-    };
-  }
-
-  /** A signing failure (or no bucket configured) never fails a review. */
-  private async signOrNull(key: string): Promise<string | null> {
-    if (!this.storage.isConfigured()) return null;
-    try {
-      return await this.storage.signedGetUrl(key, this.cfg.photoUrlTtlSeconds);
-    } catch (err) {
-      this.logger.warn(`could not sign ${key}: ${String(err)}`);
-      return null;
-    }
   }
 }
 

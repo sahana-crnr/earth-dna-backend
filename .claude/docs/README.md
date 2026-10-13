@@ -10,3 +10,4 @@ One file per backend feature of the S.H.O.E.S. flow: what it does, the rules, ev
 
 Browser test pages for each feature live in the `local-infra/ui` folder next to this repository (served on `http://localhost:8088` by `docker compose up` there).
 - `f5-shoe-profile.md` — F5 Shoe Profile + manage: profile (E21), edit (E22), remove (E23), share (E24–E26), photos (E27–E28), rescan (E29), condition feedback (E30); shoe types on E16
+- `f4-f6-my-shoes.md` — F4 + F6 My Shoes list with filters (E31) and summary (E32), Nawaz; merged with F5 (CO2e dropped, thumbnail from shoe_photos)
