@@ -221,6 +221,7 @@ describe('socialLogin properties', () => {
       zipCode: null,
       authProvider: 'facebook',
       providerUserId: null,
+      role: 'USER',
       createdAt: new Date(),
       updatedAt: new Date(),
       ...over,

@@ -186,6 +186,7 @@ describe('googleLogin properties', () => {
       zipCode: null,
       authProvider: 'google',
       providerUserId: null,
+      role: 'USER',
       createdAt: new Date(),
       updatedAt: new Date(),
       ...over,

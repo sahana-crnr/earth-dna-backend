@@ -8,4 +8,5 @@ export { default as appleConfig } from './apple.config';
 export { default as storageConfig } from './storage.config';
 export { default as scanConfig } from './scan.config';
 export { default as catalogConfig } from './catalog.config';
+export { default as adminConfig } from './admin.config';
 export { parseClientIds } from './google.config';

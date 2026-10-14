@@ -10,6 +10,8 @@ import { AuthService } from './auth.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { RolesGuard } from './guards/roles.guard';
+import { AdminBootstrapService } from './admin-bootstrap.service';
 import { GoogleTokenVerifier } from './google/google-token-verifier';
 import { FacebookTokenVerifier } from './facebook/facebook-token-verifier';
 import { AppleTokenVerifier } from './apple/apple-token-verifier';
@@ -37,12 +39,16 @@ import { UserModule } from '../user/user.module';
     AuthService,
     RefreshTokenService,
     JwtAuthGuard,
+    RolesGuard,
+    AdminBootstrapService,
     GoogleTokenVerifier,
     JwksJwtVerifier,
     FacebookTokenVerifier,
     AppleTokenVerifier,
   ],
-  // Exported so other feature modules (e.g. ScanModule) can use JwtAuthGuard.
-  exports: [JwtModule, JwtAuthGuard],
+  // Exported so other feature modules (e.g. ScanModule) can use JwtAuthGuard,
+  // and admin routes (F7) can add RolesGuard. RolesGuard needs UserService, so
+  // UserModule is re-exported with it.
+  exports: [JwtModule, JwtAuthGuard, RolesGuard, UserModule],
 })
 export class AuthModule {}

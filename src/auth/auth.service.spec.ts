@@ -9,6 +9,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { AuthService } from './auth.service';
+import { ApiError } from '../common/errors/api-error';
 import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
 import { RefreshTokenService } from './refresh-token.service';
@@ -60,6 +61,7 @@ describe('AuthService', () => {
     zipCode: null,
     authProvider: 'local',
     providerUserId: null,
+    role: 'USER',
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -355,9 +357,53 @@ describe('AuthService', () => {
       expect(jwtService.sign).toHaveBeenCalledWith({
         sub: mockUser.id,
         email: mockUser.email,
+        role: mockUser.role,
       });
     });
   });
+  describe('social sign-in never lands in the admin account (F7)', () => {
+    const admin = (): UserEntity => ({ ...mockUser, role: 'ADMIN' });
+    const isAdminOnly = (e: unknown) =>
+      e instanceof ApiError && e.code === 'ADMIN_PASSWORD_LOGIN_ONLY';
+
+    it('Google: refuses to auto-link onto the admin by email', async () => {
+      googleVerifier.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: null,
+        email: mockUser.email,
+        fullName: 'X',
+      } as unknown as Awaited<ReturnType<GoogleTokenVerifier['verify']>>);
+      userService.findByEmail.mockResolvedValue(admin());
+      const err = await service
+        .googleLogin({ idToken: 'good' })
+        .catch((e: unknown) => e);
+      expect(isAdminOnly(err)).toBe(true);
+      expect(refreshTokenService.issue).not.toHaveBeenCalled();
+    });
+
+    it('Facebook / Apple: refuses the admin account', async () => {
+      facebookVerifier.verify.mockResolvedValue(facebookIdentity);
+      userService.findByProvider.mockResolvedValue(null);
+      userService.findByEmail.mockResolvedValue(admin());
+      const err = await service
+        .facebookLogin({ accessToken: 'tok' })
+        .catch((e: unknown) => e);
+      expect(isAdminOnly(err)).toBe(true);
+      expect(refreshTokenService.issue).not.toHaveBeenCalled();
+    });
+
+    it('password login still works for the admin', async () => {
+      userService.findByEmailWithPassword.mockResolvedValue({
+        ...admin(),
+        password: await bcrypt.hash('pw', 4),
+      });
+      await service.login({ email: mockUser.email, password: 'pw' });
+      expect(jwtService.sign).toHaveBeenCalledWith(
+        expect.objectContaining({ role: 'ADMIN' }),
+      );
+    });
+  });
+
   describe('facebookLogin / appleLogin (shared socialLogin)', () => {
     const created = (over: Partial<UserEntity>): UserEntity => ({
       ...mockUser,
@@ -502,6 +548,7 @@ describe('AuthService', () => {
       expect(jwtService.sign).toHaveBeenCalledWith({
         sub: mockUser.id,
         email: mockUser.email,
+        role: mockUser.role,
       });
     });
   });

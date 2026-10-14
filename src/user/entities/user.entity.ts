@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { Exclude } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
+import { DEFAULT_USER_ROLE, USER_ROLES, type UserRole } from '../user-roles';
 
 /** How the account was created. Drives whether password login is possible. */
 export type AuthProvider = 'local' | 'google' | 'facebook' | 'apple';
@@ -72,6 +73,14 @@ export class UserEntity {
   @Exclude()
   @Column({ type: 'varchar', length: 255, nullable: true })
   providerUserId: string | null;
+
+  // F7. Unlike authProvider this IS exposed: the role is a deliberate, approved
+  // addition to the auth response so an admin client can show admin screens.
+  // It is informational only - RolesGuard re-reads it from this column rather
+  // than trusting the copy in the JWT.
+  @ApiProperty({ enum: USER_ROLES, example: DEFAULT_USER_ROLE })
+  @Column({ type: 'varchar', length: 20, default: DEFAULT_USER_ROLE })
+  role: UserRole;
 
   @ApiProperty()
   @CreateDateColumn()
