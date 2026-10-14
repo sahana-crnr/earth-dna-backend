@@ -41,3 +41,6 @@ The current Figma Filters sheet shows only Action Taken and Recommended Action; 
 
 ## Code
 `src/shoes/shoes-list.controller.ts`, `shoes-list.service.ts`, `shoe-view.mapper.ts` (card shape shared with the F3 review response), `shoes-rules.ts` (filters, multi-value parsing, summary), `dto/list-shoes-query.dto.ts`. Tests: `shoes-rules.pbt.spec.ts`, `shoes-list.controller.spec.ts`, `shoes-list.service.it.spec.ts`.
+
+## Test page
+`local-infra/ui/f4-f6-my-shoes.html`: summary header, the Filters sheet (all four groups), paging, cards with thumbnail, "Open in F5" per card.
