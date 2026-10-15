@@ -23,7 +23,7 @@ The backend behind one My Shoes entry (Figma section 4: Shoe Profile, Edit shoe 
 | `shoe_shares` | id, shoeId, token (unique), expiresAt (unused), revokedAt, viewCount, createdAt | One active link per shoe |
 | `catalog_shoe_types` | id, slug, name, sortOrder, isActive | Six fixed rows: Athletic Shoes, Casual Shoes, Dress Shoes, Boots, Sandals, Slippers |
 | `catalog_categories` | + shoeTypeId | Filled by `npm run catalog:seed` from keyword rules |
-| `scans` | + hiddenAt | Set when the last entry of a session is removed; hidden from `GET /scans` lists |
+| `scans` | + hiddenAt | Set when every shoe of the session is reviewed and no live entry points at it (recomputed on remove / rescan); hidden from `GET /scans` lists |
 | `shoe_feedback.type` | + `condition_suggested`, `rescanned` | Append-only |
 | `condition_mappings` | four grades: C1 A+ Like New · C2 A Lightly Worn · C3 / C4 B Heavily Worn · C5 C Not wearable | Labels are data (T18) |
 
@@ -33,7 +33,7 @@ The backend behind one My Shoes entry (Figma section 4: Shoe Profile, Edit shoe 
 | `SHOE_MAX_PHOTOS` | 8 | photos per shoe, scan views included |
 | `SHOE_PHOTO_URL_TTL_SECONDS` | 3600 | signed URL TTL on E21 / E26 |
 | `SHARE_BASE_URL` | unset → request API base | prefix of share links (`…/s/{token}`), e.g. `https://earthdna.app` |
-| `SHARE_TOKEN_RANDOM_CHARS` | 6 | random part of a share token |
+| `SHARE_TOKEN_RANDOM_CHARS` | 12 | random part of a share token (`crypto.randomInt`, ~59 bits) |
 | `SHOE_UPLOAD_PREFIX` | `shoes` | S3 key prefix for uploads |
 | `SCAN_PHOTO_MAX_BYTES`, `SCAN_PHOTO_ALLOWED_TYPES` | F1 values | reused for E27 |
 | `CATALOG_MUTED_ENDPOINTS` | empty | `categories` is un-muted since F5 (it is the shoe type list) |
@@ -48,9 +48,9 @@ All under `/api/v1`, JWT required except E26. Owner check on every `shoeId` (404
 | E23 | `DELETE /shoes/{shoeId}` | — | 204 | 404 |
 | E24 | `POST /shoes/{shoeId}/share` | — | 201 `{ url, token, createdAt }` (200 when a link exists) | 404 |
 | E25 | `DELETE /shoes/{shoeId}/share` | — | 204 (also when none) | 404 |
-| E26 | `GET /s/{token}` (public) | `Accept: text/html` → HTML page, else JSON (standard `{ statusCode, message, data }` envelope) | 200 public view | 404 `SHARE_NOT_FOUND` (unknown, revoked, shoe removed) |
+| E26 | `GET /s/{token}` (public) | HTML page (OpenGraph) unless `Accept` explicitly prefers `application/json` (standard `{ statusCode, message, data }` envelope) | 200 public view | 404 `SHARE_NOT_FOUND` (unknown, revoked, shoe removed) |
 | E27 | `POST /shoes/{shoeId}/photos` | multipart `file` | 201 profile view | 400 `FILE_REQUIRED` / `UNEXPECTED_FILE_FIELD` · 413 `FILE_TOO_LARGE` · 415 `UNSUPPORTED_TYPE` · 409 `PHOTO_LIMIT_REACHED` · 404 · 502 `STORAGE_UNAVAILABLE` |
-| E28 | `DELETE /shoes/{shoeId}/photos/{photoId}` | — | 200 profile view | 404 `SHOE_NOT_FOUND` / `PHOTO_NOT_FOUND` · 409 `LAST_PHOTO` |
+| E28 | `DELETE /shoes/{shoeId}/photos/{photoId}` | — | 200 profile view | 404 `SHOE_NOT_FOUND` / `PHOTO_NOT_FOUND` · 409 `SCAN_PHOTO_FIXED` (the four scan views are replaced only by a rescan) · 409 `LAST_PHOTO` |
 | E29 | `POST /shoes/{shoeId}/rescan` | — | 201 `{ scanId, shoeId, status, created: true }` (200 with `created: false` when a rescan is open) | 404 · 409 `DRAFT_LIMIT_REACHED` · 503 `STORAGE_NOT_CONFIGURED` |
 | E30 | `POST /shoes/{shoeId}/condition-feedback` | `{ suggestedConditionCode: C1–C5, reason ≤ 500 }` | 201 `{ suggestedConditionCode, reason, createdAt }` | 400 · 404 |
 | E16 | `GET /catalog/categories` | — | 200 `{ items: [{ id, name, slug, categories: [{ id, name, slug }] }] }` — the six shoe types with the product categories mapped under them | — |
@@ -91,13 +91,13 @@ Photo `view` is `top`, `right`, `left` or `sole` (Figma labels it "Bottom") for 
 The HTML variant is one static page (inline style, no script) with `og:title`, `og:description`, `og:image`; `Cache-Control: no-store`, `X-Robots-Tag: noindex`, a strict CSP.
 
 ## 4. Behaviour
-- **Edit (E22)**: in one transaction with the shoe locked: resolve catalog ids → overlay only the fields sent → if brand / model / colour / size changed, re-run the silent product match (`catalogProductId`, `msrp`) → if the brand changed and the value is still the placeholder, recompute it → `actionTaken` change sets `actionTakenAt` (cleared on `none`) → `primaryPhotoId` must be one of the shoe's photos. Edits never write a feedback row. Condition is not editable.
-- **Remove (E23)**: `deletedAt` set, the active share revoked, the origin scan hidden from lists once no other entry of that session is left. Nothing is deleted from S3; scan, photo and feedback rows stay.
-- **Share (E24 / E25 / E26)**: one active link per shoe; E24 returns it or creates one (`{model-slug}-{6 random chars}`). Links never expire. E26 counts views; 60 requests per minute per IP.
-- **Photos (E27 / E28)**: same validation as the F1 upload (bytes sniffed, size cap); key `shoes/{userId}/{shoeId}/{photoId}.{ext}`; the object is written before the row and removed again when the request fails. A shoe keeps at least one photo; removing the main photo promotes the one with the lowest sort order. Deleting an uploaded photo removes its object; deleting a scan photo from the shoe leaves the scan's object alone.
-- **Rescan (E29)**: creates a draft scan with one shoe linked to the entry (`rescanOfShoeId`). Continue with the F1 photo endpoints, finish, F2 result, F3 confirm / reject. That review **updates the entry in place**: identity from the new answer, condition from the new result, the four scan photos replaced (uploads kept, moved behind them), value recomputed while static; a `rescanned` feedback row holds the previous entry. Share links keep working. The previous scan session is hidden from `GET /scans` lists (its rows stay). Only one open rescan per shoe: a second E29 answers 200 with the same ids.
+- **Edit (E22)**: in one transaction with the shoe locked: resolve catalog ids (a brand change without `sizeId` clears a size that belongs to the old brand) → overlay only the fields sent → if brand / model / colour / size changed, re-run the silent product match (`catalogProductId`, `msrp`) → if the brand changed and the value is still the placeholder, recompute it → `actionTaken` change sets `actionTakenAt` (cleared on `none`) → `primaryPhotoId` must be one of the shoe's photos. Edits never write a feedback row. Condition is not editable.
+- **Remove (E23)**: `deletedAt` set, the active share revoked, an open rescan draft of the pair marked `abandoned` (a rescan already in processing / review answers 409 `RESCAN_TARGET_REMOVED` at review), the origin scan hidden from lists once no other entry of that session is left. Nothing is deleted from S3; scan, photo and feedback rows stay.
+- **Share (E24 / E25 / E26)**: one active link per shoe; E24 returns it or creates one (`{model-slug}-{12 random chars}`, CSPRNG). Links never expire. E26 counts views; 60 requests per minute per IP.
+- **Photos (E27 / E28)**: the four scan views are fixed per entry — replaced together by a rescan, never deleted one by one; uploads fill the rest of `SHOE_MAX_PHOTOS` (so a rescan swaps 4 for 4 and never overflows). same validation as the F1 upload (bytes sniffed, size cap); key `shoes/{userId}/{shoeId}/{photoId}.{ext}`; the object is written before the row and removed again when the request fails. A shoe keeps at least one photo; removing the main photo promotes the one with the lowest sort order. Deleting an uploaded photo removes its object; deleting a scan photo from the shoe leaves the scan's object alone.
+- **Rescan (E29)**: creates a draft scan with one shoe linked to the entry (`rescanOfShoeId`). Continue with the F1 photo endpoints, finish, F2 result, F3 confirm / reject. That review **updates the entry in place**: identity from the new answer (size, gender and shoe type kept when the body does not send them), condition from the new result, the four scan photos replaced (uploads kept, moved behind them), value recomputed while static; a `rescanned` feedback row holds the previous entry. Share links keep working. The previous scan session is hidden from `GET /scans` lists (its rows stay). Only one open rescan per shoe: a second E29 answers 200 with the same ids.
 - **Condition feedback (E30)**: append-only `shoe_feedback` row; the profile shows the latest suggestion as `conditionFeedback`.
-- **Account deletion**: `shoes`, `shoe_photos`, `shoe_shares` cascade from `users`.
+- **Account deletion**: call `ShoesService.deleteAllUploadsForUser` next to `ScanService.deleteAllForUser` (uploaded objects under `shoes/{userId}/`); `shoes`, `shoe_photos`, `shoe_shares` cascade from `users`.
 
 ## 5. Test page
 `local-infra/ui/f5-shoe-profile.html`: load a profile by id (or pick one from the F3 page's `myShoeId`), edit form with catalog dropdowns, photo grid (set main, add, remove), share (create, open the public page, copy, revoke), condition feedback, rescan (hands over to the F1 page), remove.

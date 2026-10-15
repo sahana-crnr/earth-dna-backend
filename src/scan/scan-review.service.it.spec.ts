@@ -90,7 +90,7 @@ const SHOES_CFG: ShoesConfig = {
   maxPhotos: 8,
   photoUrlTtlSeconds: 60,
   shareBaseUrl: null,
-  shareTokenRandomChars: 6,
+  shareTokenRandomChars: 12,
   uploadPrefix: 'shoes',
 };
 

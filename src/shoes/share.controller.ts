@@ -1,6 +1,6 @@
 // E26 — the public share page. No login: the token is the whole secret.
-// Answers JSON by default and a static HTML page (OpenGraph tags, no script)
-// when the client prefers text/html, so a pasted link previews as the pair.
+// Answers a static HTML page (OpenGraph tags, no script) unless the client
+// explicitly prefers application/json, so a pasted link previews as the pair.
 import { Controller, Get, HttpStatus, Param, Req, Res } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -40,7 +40,9 @@ export class ShareController {
   ): Promise<void> {
     const view = await this.shoes.publicView(token);
     for (const [k, v] of Object.entries(PUBLIC_HEADERS)) res.setHeader(k, v);
-    const wantsHtml = req.accepts(['json', 'html']) === 'html';
+    // HTML unless the client explicitly prefers JSON: `Accept: */*` (or none)
+    // is what link unfurlers send, and they need the OpenGraph page (PR 15).
+    const wantsHtml = req.accepts(['html', 'json']) !== 'json';
     if (!view) {
       res.status(HttpStatus.NOT_FOUND);
       if (wantsHtml) {

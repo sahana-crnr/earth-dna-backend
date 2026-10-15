@@ -13,7 +13,6 @@ import {
   materialsFor,
   nextPrimary,
   nextSortOrder,
-  summaryOf,
   type EditField,
   type EditInput,
   type EditableShoe,
@@ -258,83 +257,60 @@ describe('F5-P4 materialsFor / condition view', () => {
   });
 });
 
-describe('F5-P5 summaryOf', () => {
-  it('pairs = non-deleted count, potentialValue = sum of resaleMax (null = 0), actionTaken ignored', () => {
-    fc.assert(
-      fc.property(
-        fc.array(
-          fc.record({
-            deletedAt: fc.option(fc.date(), { nil: null }),
-            resaleMax: fc.option(
-              fc
-                .double({ min: 0, max: 5000, noNaN: true })
-                .map((v) => Math.round(v * 100) / 100),
-              { nil: null },
-            ),
-          }),
-          { maxLength: 30 },
-        ),
-        (shoes) => {
-          const s = summaryOf(shoes);
-          const live = shoes.filter((x) => x.deletedAt === null);
-          expect(s.pairs).toBe(live.length);
-          const expected =
-            Math.round(live.reduce((a, x) => a + (x.resaleMax ?? 0), 0) * 100) /
-            100;
-          expect(Math.abs(s.potentialValue - expected)).toBeLessThan(0.011);
-        },
-      ),
-    );
-  });
-});
-
 describe('F5-P8 photo cap (stateful model)', () => {
-  type Model = { count: number };
+  // Policy (Divesh 2026-10-15): the four scan views are fixed — never deleted
+  // one by one, only replaced together by a rescan. Uploads fill the rest of
+  // SHOE_MAX_PHOTOS. So a rescan swaps 4 for 4 and can never overflow.
+  type Model = { scan: number; uploads: number };
   const MAX = 8;
+  const total = (r: Model) => r.scan + r.uploads;
   class Upload implements fc.Command<Model, Model> {
     check = () => true;
     run(m: Model, r: Model) {
-      if (r.count < MAX) r.count += 1; // 409 PHOTO_LIMIT_REACHED otherwise
-      m.count = r.count;
-      expect(r.count).toBeLessThanOrEqual(MAX);
+      if (total(r) < MAX) r.uploads += 1; // 409 PHOTO_LIMIT_REACHED otherwise
+      Object.assign(m, r);
+      expect(total(r)).toBeLessThanOrEqual(MAX);
     }
     toString = () => 'upload';
   }
-  class Delete implements fc.Command<Model, Model> {
+  class DeleteUpload implements fc.Command<Model, Model> {
     check = () => true;
     run(m: Model, r: Model) {
-      if (canDeletePhoto(r.count)) r.count -= 1; // 409 LAST_PHOTO otherwise
-      m.count = r.count;
-      expect(r.count).toBeGreaterThanOrEqual(1);
+      // scan rows answer 409 SCAN_PHOTO_FIXED; only an upload can go, and
+      // never the last photo of the pair
+      if (r.uploads > 0 && canDeletePhoto(total(r))) r.uploads -= 1;
+      Object.assign(m, r);
+      expect(total(r)).toBeGreaterThanOrEqual(1);
     }
-    toString = () => 'delete';
+    toString = () => 'deleteUpload';
   }
   class Rescan implements fc.Command<Model, Model> {
-    constructor(private readonly uploads: number) {}
     check = () => true;
     run(m: Model, r: Model) {
-      // scan rows replaced by 4 new views; uploads kept (bounded by the cap)
-      const uploads = Math.min(this.uploads, Math.max(0, r.count - 1));
-      r.count = Math.min(MAX, 4 + uploads);
-      m.count = r.count;
-      expect(r.count).toBeLessThanOrEqual(MAX);
+      r.scan = 4; // four new views replace the old ones; uploads untouched
+      Object.assign(m, r);
+      expect(total(r)).toBeLessThanOrEqual(MAX);
+      expect(r.scan).toBe(4);
     }
-    toString = () => `rescan(${this.uploads})`;
+    toString = () => 'rescan';
   }
-  it('never exceeds the cap nor drops below one photo', () => {
+  it('never exceeds the cap, keeps the four views, never drops below one photo', () => {
     fc.assert(
       fc.property(
         fc.commands(
           [
             fc.constant(new Upload()),
-            fc.constant(new Delete()),
-            fc.integer({ min: 0, max: 6 }).map((n) => new Rescan(n)),
+            fc.constant(new DeleteUpload()),
+            fc.constant(new Rescan()),
           ],
           { maxCommands: 40 },
         ),
         (cmds) => {
           fc.modelRun(
-            () => ({ model: { count: 4 }, real: { count: 4 } }),
+            () => ({
+              model: { scan: 4, uploads: 0 },
+              real: { scan: 4, uploads: 0 },
+            }),
             cmds,
           );
         },

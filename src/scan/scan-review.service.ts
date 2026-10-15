@@ -214,6 +214,15 @@ export class ScanReviewService {
             lock: { mode: 'pessimistic_write' },
           })
         : null;
+      if (shoe.rescanOfShoeId && !rescanOf) {
+        // PR 15 review: the pair was removed after the rescan started; never
+        // resurrect it as a fresh entry.
+        throw new ApiError(
+          HttpStatus.CONFLICT,
+          'RESCAN_TARGET_REMOVED',
+          'The shoe this rescan belongs to was removed',
+        );
+      }
       if (rescanOf) {
         const view = await this.completeRescan(m, {
           userId,
@@ -396,13 +405,16 @@ export class ScanReviewService {
       subCategory: r.identity.subCategory,
       model: r.identity.model,
       colorway: r.identity.color,
-      sizeId: r.sizeId,
-      size: r.identity.size,
-      gender: r.identity.gender,
+      // PR 15 review: size, gender and shoe type are what the user typed on the
+      // Edit screen and what ShoeDNA cannot know — keep them unless the body
+      // (or a mapped category) supplies a new value.
+      sizeId: r.sizeId ?? e.sizeId,
+      size: r.identity.size ?? e.size,
+      gender: r.identity.gender ?? e.gender,
       conditionCode: r.identity.conditionCode,
       material: r.identity.material,
-      shoeTypeId: r.shoeTypeId,
-      shoeType: r.shoeTypeName,
+      shoeTypeId: r.shoeTypeId ?? e.shoeTypeId,
+      shoeType: r.shoeTypeName ?? e.shoeType,
       catalogProductId: r.productId,
       msrp: r.msrp,
       ...(e.valueSource === 'static' ? r.valueFields : {}),

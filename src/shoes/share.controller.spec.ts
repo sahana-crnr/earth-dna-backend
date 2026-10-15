@@ -83,7 +83,7 @@ describe('ShareController', () => {
     ).toBeUndefined();
   });
 
-  it('answers JSON by default with no-store and nosniff', async () => {
+  it('answers JSON when the client prefers application/json, with no-store and nosniff', async () => {
     const res = fakeRes();
     await ctrlWith(VIEW).view('cloudmonster-2-abc123', fakeReq('json'), res);
     expect(res.statusCode).toBe(200);
@@ -91,6 +91,16 @@ describe('ShareController', () => {
     expect(res.headers['Cache-Control']).toBe('no-store');
     expect(res.headers['X-Content-Type-Options']).toBe('nosniff');
     expect(res.headers['Content-Security-Policy']).toBeUndefined();
+  });
+
+  it('answers HTML (OpenGraph) for text/html and for */* or no Accept header', async () => {
+    const any = fakeRes();
+    // express answers 'html' for */* because html is first in our list
+    await ctrlWith(VIEW).view('cloudmonster-2-abc123', fakeReq('html'), any);
+    expect(any.contentType).toBe('html');
+    const none = fakeRes();
+    await ctrlWith(VIEW).view('cloudmonster-2-abc123', fakeReq(false), none);
+    expect(none.contentType).toBe('html');
   });
 
   it('answers HTML with a CSP when the client prefers text/html', async () => {

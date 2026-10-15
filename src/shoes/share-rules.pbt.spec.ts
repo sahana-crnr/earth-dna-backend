@@ -10,6 +10,14 @@ import {
 } from './share-rules';
 
 describe('F5-P2 makeToken', () => {
+  it('defaults to a CSPRNG-backed 12-char random part', () => {
+    const a = randomPart(12);
+    const b = randomPart(12);
+    expect(a).toHaveLength(12);
+    expect(a).not.toBe(b);
+    for (const c of a) expect(TOKEN_ALPHABET).toContain(c);
+  });
+
   const text = fc.option(fc.string({ maxLength: 120 }), { nil: null });
   const chars = fc.integer({ min: 1, max: 24 });
 
@@ -24,11 +32,11 @@ describe('F5-P2 makeToken', () => {
           .chain((seed) => fc.constant(seed)),
         (model, brand, n, seed) => {
           let x = seed;
-          const rnd = () => {
+          const pick = (max: number) => {
             x = ((x * 9301 + 49297) % 233280) / 233280;
-            return x;
+            return Math.floor(x * max);
           };
-          const random = randomPart(n, rnd);
+          const random = randomPart(n, pick);
           expect(random).toHaveLength(n);
           for (const c of random) expect(TOKEN_ALPHABET).toContain(c);
           const token = makeToken(model, brand, random);

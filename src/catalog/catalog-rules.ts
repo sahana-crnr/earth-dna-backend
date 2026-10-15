@@ -305,12 +305,14 @@ export const SHOE_TYPE_SLUGS = [
 ] as const;
 export type ShoeTypeSlug = (typeof SHOE_TYPE_SLUGS)[number];
 
-/** First keyword hit wins; order matters (boot before shoe, slipper before
- *  sandal). Null when nothing matches — the category stays untyped. */
+/** Whole-token match on the slugged text (PR 15 review: `workout` must not
+ *  hit `work`, `platform` must not hit `flat`); plurals are folded. First
+ *  type in this order with any hit wins (boot before shoe, sandal before
+ *  hiking). Null when nothing matches — the category stays untyped. */
 const SHOE_TYPE_KEYWORDS: readonly [ShoeTypeSlug, readonly string[]][] = [
-  ['boots', ['boot', 'bootie', 'chelsea', 'hiking', 'work']],
+  ['boots', ['boot', 'bootie', 'chelsea']],
   ['slippers', ['slipper', 'mule', 'clog', 'house']],
-  ['sandals', ['sandal', 'slide', 'flip', 'thong', 'espadrille']],
+  ['sandals', ['sandal', 'slide', 'flip', 'flop', 'thong', 'espadrille']],
   [
     'dress-shoes',
     [
@@ -321,6 +323,8 @@ const SHOE_TYPE_KEYWORDS: readonly [ShoeTypeSlug, readonly string[]][] = [
       'brogue',
       'pump',
       'heel',
+      'wedge',
+      'platform',
       'formal',
       'monk',
     ],
@@ -330,6 +334,10 @@ const SHOE_TYPE_KEYWORDS: readonly [ShoeTypeSlug, readonly string[]][] = [
     [
       'athletic',
       'running',
+      'run',
+      'workout',
+      'training',
+      'hiking',
       'sneaker',
       'trainer',
       'sport',
@@ -371,8 +379,16 @@ export function shoeTypeFor(
 ): ShoeTypeSlug | null {
   const text = slugify(categorySlugOrName ?? '');
   if (!text) return null;
+  const tokens = new Set(
+    text
+      .split('-')
+      .filter((t) => t.length > 0)
+      .map((t) =>
+        t.length > 3 && !t.endsWith('ss') ? t.replace(/s$/, '') : t,
+      ),
+  );
   for (const [type, words] of SHOE_TYPE_KEYWORDS) {
-    if (words.some((w) => text.includes(w))) return type;
+    if (words.some((w) => tokens.has(w))) return type;
   }
   return null;
 }

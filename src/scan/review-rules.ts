@@ -2,14 +2,12 @@
 // TypeORM or AWS imports so each function is property-tested directly, like
 // scan-rules.ts (F1) and result-rules.ts (F2).
 import {
-  SHOE_VIEWS,
   type ConditionCode,
   type Gender,
   type RecommendedAction,
   type ResaleBucket,
   type ReviewState,
   type ScanShoeStatus,
-  type ShoeView,
 } from './scan.types';
 
 // ─── F3-P1: overlay (body wins, prediction fills, never invents) ─────────────
@@ -240,21 +238,4 @@ export function resaleBucketFor(resaleMax: number | null): ResaleBucket | null {
   if (resaleMax <= 50) return 'from_25_to_50';
   if (resaleMax <= 100) return 'from_50_to_100';
   return 'over_100';
-}
-
-// ─── thumbnail ───────────────────────────────────────────────────────────────
-
-/** The configured view's key, else the first captured view in canonical order,
- *  else null (a reviewed shoe always has 4 photos, but the rule is total). */
-export function thumbnailKeyFor(
-  photos: readonly { view: ShoeView; s3Key: string }[],
-  preferred: ShoeView,
-): string | null {
-  const hit = photos.find((p) => p.view === preferred);
-  if (hit) return hit.s3Key;
-  for (const v of SHOE_VIEWS) {
-    const p = photos.find((x) => x.view === v);
-    if (p) return p.s3Key;
-  }
-  return null;
 }

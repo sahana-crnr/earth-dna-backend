@@ -10,6 +10,9 @@ import { ConfigService } from '@nestjs/config';
 import type { ScanConfig } from '../config/scan.config';
 import { conditionLabelFor } from '../scan/result-rules';
 import { PhotoStorage } from '../storage/photo-storage';
+import { signOrNull } from '../storage/photo-storage.ops';
+import { ConditionMappingEntity } from '../catalog/entities/condition-mapping.entity';
+import type { ConditionCode } from '../scan/scan.types';
 import { EntityManager, In } from 'typeorm';
 import { ShoeEntity } from './entities/shoe.entity';
 import { ShoePhotoEntity } from './entities/shoe-photo.entity';
@@ -29,9 +32,24 @@ export class ShoeViewMapper {
 
   /** @param primaryKey s3Key of the shoe's primary shoe_photos row (F5-D17),
    *  resolved by the caller in one batch; null → no thumbnail. */
+  /**
+   * Condition labels for a page of cards, one query (PR 15 review: cards and
+   * the profile read the same `condition_mappings` rows, so a label rename is
+   * an UPDATE, not a release). Falls back to the F2 constants when the table
+   * is empty.
+   */
+  async conditionLabels(
+    m: EntityManager,
+  ): Promise<ReadonlyMap<ConditionCode, string>> {
+    const rows = await m.find(ConditionMappingEntity);
+    return new Map(rows.map((r) => [r.code, r.label]));
+  }
+
+  /** @param labels from `conditionLabels(m)`, shared across the page. */
   async toMyShoeView(
     e: ShoeEntity,
     primaryKey: string | null,
+    labels: ReadonlyMap<ConditionCode, string> = new Map(),
   ): Promise<MyShoeView> {
     return {
       id: e.id,
@@ -46,7 +64,9 @@ export class ShoeViewMapper {
       shoeType: { id: e.shoeTypeId, name: e.shoeType },
       condition: {
         code: e.conditionCode,
-        label: conditionLabelFor(e.conditionCode),
+        label:
+          (e.conditionCode ? labels.get(e.conditionCode) : undefined) ??
+          conditionLabelFor(e.conditionCode),
       },
       material: e.material,
       recommendedAction: e.recommendedAction,
@@ -78,13 +98,12 @@ export class ShoeViewMapper {
     return new Map(rows.map((r) => [r.id, r.s3Key]));
   }
 
-  private async signOrNull(key: string): Promise<string | null> {
-    if (!this.storage.isConfigured()) return null;
-    try {
-      return await this.storage.signedGetUrl(key, this.cfg.photoUrlTtlSeconds);
-    } catch (err) {
-      this.logger.warn(`could not sign ${key}: ${String(err)}`);
-      return null;
-    }
+  private signOrNull(key: string): Promise<string | null> {
+    return signOrNull(
+      this.storage,
+      this.logger,
+      key,
+      this.cfg.photoUrlTtlSeconds,
+    );
   }
 }

@@ -62,7 +62,10 @@ export class ScanResultsBuilder {
         ])
       : [[], []];
     // Primary photos of the entries, one query (F5-D17 replaced the copied key).
-    const primaryKey = await this.shoeViews.primaryKeysFor(m, entries);
+    const [primaryKey, labels] = await Promise.all([
+      this.shoeViews.primaryKeysFor(m, entries),
+      this.shoeViews.conditionLabels(m),
+    ]);
     const resultByShoe = new Map(results.map((r) => [r.scanShoeId, r]));
     const entryByShoe = new Map(entries.map((e) => [e.scanShoeId, e]));
     // The brand prefill is only needed for shoes still waiting for a review;
@@ -104,6 +107,7 @@ export class ScanResultsBuilder {
                 entry.primaryPhotoId
                   ? (primaryKey.get(entry.primaryPhotoId) ?? null)
                   : null,
+                labels,
               )
             : null,
           suggested: {

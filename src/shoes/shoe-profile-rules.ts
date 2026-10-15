@@ -241,27 +241,3 @@ export function applyEdit(
   );
   return { next, changed, rematch, revalue: changed.has('brand') };
 }
-
-// ─── F5-P5: summary (F5-D23, shared with F6) ─────────────────────────────────
-
-export interface SummaryInput {
-  deletedAt: Date | null;
-  resaleMax: number | null;
-}
-
-export interface Summary {
-  pairs: number;
-  potentialValue: number;
-}
-
-/** Non-deleted shoes only; actionTaken ignored (Q10-B); null resale = 0. */
-export function summaryOf(shoes: readonly SummaryInput[]): Summary {
-  let pairs = 0;
-  let potentialValue = 0;
-  for (const s of shoes) {
-    if (s.deletedAt !== null) continue;
-    pairs += 1;
-    potentialValue += s.resaleMax ?? 0;
-  }
-  return { pairs, potentialValue: Math.round(potentialValue * 100) / 100 };
-}

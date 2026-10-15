@@ -28,7 +28,7 @@ export default registerAs(
     shareBaseUrl: nonEmptyUrl(process.env.SHARE_BASE_URL),
     shareTokenRandomChars: parsePositiveInt(
       process.env.SHARE_TOKEN_RANDOM_CHARS,
-      6,
+      12,
     ),
     uploadPrefix: cleanPrefix(process.env.SHOE_UPLOAD_PREFIX, 'shoes'),
   }),

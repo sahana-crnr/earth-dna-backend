@@ -12,7 +12,6 @@ import {
   reviewStateFor,
   reviewedCount,
   stableHash,
-  thumbnailKeyFor,
   type DetailsAnswer,
   type PredictedIdentity,
   type ReviewMode,
@@ -22,7 +21,6 @@ import {
   GENDERS,
   RESALE_BUCKETS,
   SCAN_SHOE_STATUSES,
-  SHOE_VIEWS,
   type ScanShoeStatus,
 } from './scan.types';
 
@@ -247,27 +245,6 @@ describe('F3-P4 placeholderFor', () => {
           expect(ia).toBeLessThanOrEqual(ib);
         },
       ),
-    );
-  });
-});
-
-describe('thumbnailKeyFor', () => {
-  const photosArb = fc
-    .uniqueArray(fc.constantFrom(...SHOE_VIEWS), { maxLength: 4 })
-    .map((views) => views.map((view) => ({ view, s3Key: `k/${view}` })));
-
-  it('preferred view wins, else first canonical view, else null', () => {
-    fc.assert(
-      fc.property(photosArb, fc.constantFrom(...SHOE_VIEWS), (photos, pref) => {
-        const key = thumbnailKeyFor(photos, pref);
-        const has = (v: string) => photos.some((p) => p.view === v);
-        if (has(pref)) expect(key).toBe(`k/${pref}`);
-        else if (photos.length === 0) expect(key).toBeNull();
-        else {
-          const first = SHOE_VIEWS.find((v) => has(v))!;
-          expect(key).toBe(`k/${first}`);
-        }
-      }),
     );
   });
 });

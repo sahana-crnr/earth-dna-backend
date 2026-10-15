@@ -96,7 +96,7 @@ const SHOES_CFG: ShoesConfig = {
   maxPhotos: 6,
   photoUrlTtlSeconds: 60,
   shareBaseUrl: null,
-  shareTokenRandomChars: 6,
+  shareTokenRandomChars: 12,
   uploadPrefix: 'shoes',
 };
 
@@ -439,7 +439,7 @@ d('ShoesService (integration, real Postgres)', () => {
   });
 
   // ─── E27 / E28 photos ────────────────────────────────────────────────────
-  it('photos: upload to the cap, primary promotion on delete, last photo kept, uploads removed from storage', async () => {
+  it('photos: upload to the cap, primary promotion on delete, scan photos fixed, uploads removed from storage', async () => {
     const userId = await newUser();
     const { myShoeId } = await reviewedShoe(userId);
     storage.deleted = [];
@@ -472,29 +472,95 @@ d('ShoesService (integration, real Postgres)', () => {
     expect(
       storage.deleted.some((k) => k.startsWith(`shoes/${userId}/${myShoeId}/`)),
     ).toBe(true);
-    // scan photos are never deleted from storage
+    // scan photos are fixed: replaced by a rescan, never deleted one by one
     storage.deleted = [];
     const top = p.photos.find((x) => x.view === 'top')!;
-    p = await shoes.deletePhoto(userId, myShoeId, top.id, BASE);
+    expect(await code(shoes.deletePhoto(userId, myShoeId, top.id, BASE))).toBe(
+      'SCAN_PHOTO_FIXED',
+    );
     expect(storage.deleted).toEqual([]);
     expect(
       await code(shoes.deletePhoto(userId, myShoeId, randomUUID(), BASE)),
     ).toBe('PHOTO_NOT_FOUND');
-    // down to one
-    for (const ph of p.photos.slice(1)) {
+    // remaining upload removed → back to the four views
+    for (const ph of p.photos.filter((x) => x.source === 'upload')) {
       p = await shoes.deletePhoto(userId, myShoeId, ph.id, BASE);
     }
-    expect(p.photos).toHaveLength(1);
-    expect(
-      await code(shoes.deletePhoto(userId, myShoeId, p.photos[0].id, BASE)),
-    ).toBe('LAST_PHOTO');
+    expect(p.photos).toHaveLength(4);
+    expect(p.photos.every((x) => x.source === 'scan')).toBe(true);
     // the F3 results view still finds a thumbnail through the primary row
     const scanShoe = await ds
       .getRepository(ScanShoeEntity)
       .findOneByOrFail({ id: (await shoeRow(myShoeId)).scanShoeId ?? '' });
     const rv = await results.results(userId, scanShoe.scanId);
     expect(rv.shoes[0].myShoe?.thumbnailUrl).toMatch(/^fake:\/\//);
-    expect(rv.shoes[0].myShoe?.primaryPhotoId).toBe(p.photos[0].id);
+    expect(rv.shoes[0].myShoe?.primaryPhotoId).toBe(
+      p.photos.find((x) => x.isPrimary)!.id,
+    );
+  });
+
+  it('PR 15: a brand edit keeps the placeholder seed; a foreign size is cleared', async () => {
+    const userId = await newUser();
+    const { myShoeId } = await reviewedShoe(userId);
+    await shoes.update(
+      userId,
+      myShoeId,
+      { brandId: nike.id, sizeId: size9.id },
+      BASE,
+    );
+    const before = await shoeRow(myShoeId);
+    await shoes.update(userId, myShoeId, { brandId: adidas.id }, BASE);
+    const after = await shoeRow(myShoeId);
+    // same seed (scan shoe id) → same placeholder value on a rename
+    expect(after.recommendedAction).toBe(before.recommendedAction);
+    expect(after.resaleMin).toBe(before.resaleMin);
+    expect(after.resaleMax).toBe(before.resaleMax);
+    // the Nike size does not belong to Adidas → cleared
+    expect(after.sizeId).toBeNull();
+    expect(after.size).toBeNull();
+  });
+
+  it('PR 15: remove abandons an open rescan draft; a rescan in flight cannot resurrect the pair', async () => {
+    const userId = await newUser();
+    const a = await reviewedShoe(userId);
+    const draft = await shoes.rescan(userId, a.myShoeId);
+    await shoes.remove(userId, a.myShoeId);
+    expect(
+      (await ds.getRepository(ScanEntity).findOneByOrFail({ id: draft.scanId }))
+        .status,
+    ).toBe('abandoned');
+
+    const b = await reviewedShoe(userId);
+    const r = await shoes.rescan(userId, b.myShoeId);
+    for (const v of SHOE_VIEWS) {
+      await scans.uploadPhoto(userId, r.scanId, r.shoeId, v, file, null);
+    }
+    await scans.finish(userId, r.scanId);
+    await results.submit(userId, r.scanId, r.shoeId, RESULT);
+    await shoes.remove(userId, b.myShoeId); // removed while in review
+    expect(await code(reviews.confirm(userId, r.scanId, r.shoeId, {}))).toBe(
+      'RESCAN_TARGET_REMOVED',
+    );
+    expect(
+      await ds
+        .getRepository(ShoeEntity)
+        .count({ where: { userId, deletedAt: IsNull() } }),
+    ).toBe(0);
+  });
+
+  it('PR 15: account purge removes uploaded photos (rows and objects), keeps scan rows', async () => {
+    const userId = await newUser();
+    const { myShoeId } = await reviewedShoe(userId);
+    await shoes.uploadPhoto(userId, myShoeId, file, BASE);
+    await shoes.uploadPhoto(userId, myShoeId, file, BASE);
+    storage.deleted = [];
+    expect(await shoes.deleteAllUploadsForUser(userId)).toBe(2);
+    expect(
+      storage.deleted.filter((k) => k.startsWith(`shoes/${userId}/`)),
+    ).toHaveLength(2);
+    const left = await photosOf(myShoeId);
+    expect(left).toHaveLength(4);
+    expect(left.every((x) => x.source === 'scan')).toBe(true);
   });
 
   // ─── E24 / E25 / E26 share ───────────────────────────────────────────────
@@ -504,7 +570,7 @@ d('ShoesService (integration, real Postgres)', () => {
     const s1 = await shoes.createShare(userId, myShoeId, BASE);
     expect(s1.created).toBe(true);
     expect(s1.link.url).toBe(`${BASE}/s/${s1.link.token}`);
-    expect(s1.link.token).toMatch(/^[a-z0-9-]+-[a-z2-9]{6}$/);
+    expect(s1.link.token).toMatch(/^[a-z0-9-]+-[a-z2-9]{12}$/);
     const s2 = await shoes.createShare(userId, myShoeId, BASE);
     expect(s2.created).toBe(false);
     expect(s2.link.token).toBe(s1.link.token);
@@ -594,6 +660,18 @@ d('ShoesService (integration, real Postgres)', () => {
     const uploadId = up.photos.find((x) => x.source === 'upload')!.id;
     const share = await shoes.createShare(userId, myShoeId, BASE);
     const before = await photosOf(myShoeId);
+    // user-entered fields that ShoeDNA cannot know (PR 15 review)
+    await shoes.update(
+      userId,
+      myShoeId,
+      {
+        brandId: nike.id,
+        sizeId: size9.id,
+        gender: 'women',
+        shoeTypeId: boots.id,
+      },
+      BASE,
+    );
 
     const r = await shoes.rescan(userId, myShoeId);
     for (const v of SHOE_VIEWS) {
@@ -603,7 +681,7 @@ d('ShoesService (integration, real Postgres)', () => {
     await results.submit(userId, r.scanId, r.shoeId, {
       ...RESULT,
       conditionCode: 'C4',
-      category: 'boots',
+      category: 'specialty_footwear', // maps to no shoe type → Boots kept
     });
     const view = await reviews.confirm(userId, r.scanId, r.shoeId, {
       model: 'Air Max 90',
@@ -621,6 +699,10 @@ d('ShoesService (integration, real Postgres)', () => {
     expect(row.conditionCode).toBe('C4');
     expect(row.model).toBe('Air Max 90');
     expect(row.shoeType).toBe('Boots');
+    // kept from the Edit screen: not in the confirm body
+    expect(row.sizeId).toBe(size9.id);
+    expect(row.size).toBe('9');
+    expect(row.gender).toBe('women');
     const after = await photosOf(myShoeId);
     expect(after).toHaveLength(5);
     expect(
@@ -681,6 +763,37 @@ d('ShoesService (integration, real Postgres)', () => {
     // the F3 results view still answers for the scan itself (not hidden from direct reads)
     const rv = await results.results(userId, scanId);
     expect(rv.shoes[0].myShoeId).toBe(myShoeId);
+  });
+
+  it('remove never hides a session that still has shoes awaiting review (PR 15)', async () => {
+    const userId = await newUser();
+    let s = await scans.createDraft(userId);
+    s = await scans.addShoe(userId, s.id);
+    s = await scans.addShoe(userId, s.id);
+    const ids = s.shoes.map((x) => x.id);
+    for (const id of ids) {
+      for (const v of SHOE_VIEWS)
+        await scans.uploadPhoto(userId, s.id, id, v, file, null);
+    }
+    await scans.finish(userId, s.id);
+    for (const id of ids) await results.submit(userId, s.id, id, RESULT);
+    const v1 = await reviews.confirm(userId, s.id, ids[0], {});
+    const my1 = v1.shoes.find((x) => x.shoeId === ids[0])!.myShoeId!;
+    await shoes.remove(userId, my1);
+    // shoe 2 is still pending → the session stays listed
+    expect(
+      (await ds.getRepository(ScanEntity).findOneByOrFail({ id: s.id }))
+        .hiddenAt,
+    ).toBeNull();
+    expect(
+      (await scans.list(userId, undefined, 10, 0)).items.map((x) => x.id),
+    ).toContain(s.id);
+    // reviewing shoe 2 creates a live entry; still visible
+    await reviews.confirm(userId, s.id, ids[1], {});
+    expect(
+      (await ds.getRepository(ScanEntity).findOneByOrFail({ id: s.id }))
+        .hiddenAt,
+    ).toBeNull();
   });
 
   it('remove hides the scan only once every entry of that session is gone', async () => {

@@ -43,12 +43,16 @@ export class ShoesListService {
       skip: offset,
     });
     // Primary photo keys in one query (F5 shoe_photos), then sign together.
-    const keys = await this.views.primaryKeysFor(this.dataSource.manager, rows);
+    const [keys, labels] = await Promise.all([
+      this.views.primaryKeysFor(this.dataSource.manager, rows),
+      this.views.conditionLabels(this.dataSource.manager),
+    ]);
     const items = await Promise.all(
       rows.map(async (e) => ({
         ...(await this.views.toMyShoeView(
           e,
           e.primaryPhotoId ? (keys.get(e.primaryPhotoId) ?? null) : null,
+          labels,
         )),
         actionTaken: e.actionTaken,
         resaleBucket: e.resaleBucket,

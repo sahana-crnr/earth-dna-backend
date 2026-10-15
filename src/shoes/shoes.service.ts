@@ -18,14 +18,16 @@ import { ScanEntity } from '../scan/entities/scan.entity';
 import { ScanPhotoEntity } from '../scan/entities/scan-photo.entity';
 import { ScanShoeEntity } from '../scan/entities/scan-shoe.entity';
 import { ShoeFeedbackEntity } from '../scan/entities/shoe-feedback.entity';
-import { notFound } from '../scan/scan-access';
+import { assertDraftRoom, notFound } from '../scan/scan-access';
 import { CONTENT_TYPE, FILE_EXT } from '../scan/scan-rules';
 import { SHOE_VIEWS, type ScanStatus, type ShoeView } from '../scan/scan.types';
+import { PhotoStorage } from '../storage/photo-storage';
 import {
-  PhotoStorage,
-  StorageNotConfiguredError,
-  StorageUnavailableError,
-} from '../storage/photo-storage';
+  putOrThrow,
+  requireStorage,
+  safeDelete,
+  signOrNull,
+} from '../storage/photo-storage.ops';
 import {
   validateUploadedPhoto,
   type UploadedPhoto,
@@ -130,6 +132,24 @@ export class ShoesService {
         input.brand = row.name;
       }
       const brandForSize = input.brandId ?? shoe.brandId;
+      if (
+        input.brandId !== undefined &&
+        input.brandId !== shoe.brandId &&
+        dto.sizeId === undefined &&
+        shoe.sizeId
+      ) {
+        // Brand changed, size not re-sent: keep the size only when it belongs
+        // to the new brand (or is generic); otherwise clear it (PR 15 review).
+        const still = await this.catalog.sizeById(
+          m,
+          shoe.sizeId,
+          input.brandId,
+        );
+        if (!still) {
+          input.sizeId = null;
+          input.size = null;
+        }
+      }
       if (dto.sizeId !== undefined) {
         if (dto.sizeId === null) {
           input.sizeId = null;
@@ -200,7 +220,9 @@ export class ShoesService {
         }
         if (edit.revalue && shoe.valueSource === 'static') {
           const v = await this.values.valueFor({
-            shoeId: shoe.id,
+            // Same seed as the review used (the scan shoe id), so a rename
+            // keeps the pair's placeholder (PR 15 review).
+            shoeId: shoe.scanShoeId ?? shoe.id,
             brand: edit.next.brand,
             model: edit.next.model,
             conditionCode: shoe.conditionCode,
@@ -238,6 +260,25 @@ export class ShoesService {
         { shoeId: shoe.id, revokedAt: IsNull() },
         { revokedAt: now },
       );
+      // Open rescan drafts of this pair end here; an in-flight one (processing
+      // / review) is refused at review time (RESCAN_TARGET_REMOVED).
+      const drafts = await m
+        .getRepository(ScanEntity)
+        .createQueryBuilder('scan')
+        .innerJoin(ScanShoeEntity, 'ss', 'ss."scanId" = scan.id')
+        .where('ss."rescanOfShoeId" = :shoeId AND scan.status = :draft', {
+          shoeId: shoe.id,
+          draft: 'draft',
+        })
+        .select('scan.id', 'id')
+        .getRawMany<{ id: string }>();
+      if (drafts.length) {
+        await m.update(
+          ScanEntity,
+          { id: In(drafts.map((d) => d.id)) },
+          { status: 'abandoned' },
+        );
+      }
       await this.hideScanIfOrphaned(m, shoe.scanShoeId, now);
       this.logger.log(`shoe ${shoe.id} removed`);
     });
@@ -313,6 +354,15 @@ export class ShoesService {
       });
       const target = photos.find((p) => p.id === photoId);
       if (!target) throw notFound('PHOTO_NOT_FOUND', 'Photo not found');
+      if (target.source === 'scan') {
+        // The four captured views are the pair's identity: replaced together
+        // by a rescan, never removed one by one (Divesh 2026-10-15).
+        throw new ApiError(
+          HttpStatus.CONFLICT,
+          'SCAN_PHOTO_FIXED',
+          'Scan photos are replaced by a rescan, not deleted',
+        );
+      }
       if (!canDeletePhoto(photos.length)) {
         throw new ApiError(
           HttpStatus.CONFLICT,
@@ -438,22 +488,7 @@ export class ShoesService {
       const shoe = await findOwnedShoe(m, userId, shoeId, true);
       const open = await this.openRescan(m, shoe.id);
       if (open) return { ...open, created: false };
-      if (this.scanCfg.maxOpenDrafts > 0) {
-        // Same guard as ScanService.createDraft (E1), kept in step with it.
-        await m.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-          `scan-draft:${userId}`,
-        ]);
-        const openDrafts = await m.count(ScanEntity, {
-          where: { userId, status: 'draft' },
-        });
-        if (openDrafts >= this.scanCfg.maxOpenDrafts) {
-          throw new ApiError(
-            HttpStatus.CONFLICT,
-            'DRAFT_LIMIT_REACHED',
-            `You can have at most ${this.scanCfg.maxOpenDrafts} open scans`,
-          );
-        }
-      }
+      await assertDraftRoom(m, userId, this.scanCfg.maxOpenDrafts);
       const scan = await m.save(
         m.create(ScanEntity, { userId, status: 'draft', source: 'camera' }),
       );
@@ -507,9 +542,11 @@ export class ShoesService {
   }
 
   /**
-   * F5-D10: once no live My Shoes entry points at any shoe of the session
-   * that `scanShoeId` belongs to, the session leaves the GET /scans lists.
-   * Called on remove and when a rescan review moves the entry to a new scan.
+   * F5-D10 (PR 15 review): a session leaves the GET /scans lists only when it
+   * has nothing left to do — every shoe confirmed or rejected AND no live
+   * My Shoes entry points at it. A session with shoes still awaiting review
+   * stays listed whatever happened to its other entries. The flag is
+   * recomputed, never only set, so a session can come back.
    */
   async hideScanIfOrphaned(
     m: EntityManager,
@@ -522,17 +559,57 @@ export class ShoesService {
       select: { id: true, scanId: true },
     });
     if (!scanShoe) return;
-    const n = await m
-      .getRepository(ShoeEntity)
-      .createQueryBuilder('s')
-      .innerJoin(ScanShoeEntity, 'ss', 'ss.id = s."scanShoeId"')
-      .where('ss."scanId" = :scanId AND s."deletedAt" IS NULL', {
-        scanId: scanShoe.scanId,
-      })
-      .getCount();
-    if (n === 0) {
-      await m.update(ScanEntity, { id: scanShoe.scanId }, { hiddenAt: now });
-    }
+    const [live, pending] = await Promise.all([
+      m
+        .getRepository(ShoeEntity)
+        .createQueryBuilder('s')
+        .innerJoin(ScanShoeEntity, 'ss', 'ss.id = s."scanShoeId"')
+        .where('ss."scanId" = :scanId AND s."deletedAt" IS NULL', {
+          scanId: scanShoe.scanId,
+        })
+        .getCount(),
+      m
+        .getRepository(ScanShoeEntity)
+        .createQueryBuilder('ss')
+        .where('ss."scanId" = :scanId AND ss.status NOT IN (:...done)', {
+          scanId: scanShoe.scanId,
+          done: ['confirmed', 'rejected'],
+        })
+        .getCount(),
+    ]);
+    const hidden = live === 0 && pending === 0;
+    await m.update(
+      ScanEntity,
+      { id: scanShoe.scanId },
+      { hiddenAt: hidden ? now : null },
+    );
+  }
+
+  /**
+   * Account deletion (PR 15 review): uploaded photos live under
+   * shoes/{userId}/… and nothing else references them, so they must go with
+   * the account. Rows are removed here; the user row cascades the rest. Call
+   * next to ScanService.deleteAllForUser. Returns the number of objects.
+   */
+  async deleteAllUploadsForUser(userId: string): Promise<number> {
+    const keys = await this.dataSource.transaction(async (m) => {
+      const rows = await m
+        .getRepository(ShoePhotoEntity)
+        .createQueryBuilder('p')
+        .innerJoin(ShoeEntity, 's', 's.id = p."shoeId"')
+        .where('s."userId" = :userId AND p.source = :src', {
+          userId,
+          src: 'upload',
+        })
+        .select(['p.id', 'p.s3Key'])
+        .getMany();
+      if (rows.length) {
+        await m.delete(ShoePhotoEntity, { id: In(rows.map((r) => r.id)) });
+      }
+      return rows.map((r) => r.s3Key);
+    });
+    for (const k of keys) await this.safeDelete(k);
+    return keys.length;
   }
 
   // ─── hooks for the F3 review transaction ─────────────────────────────────
@@ -563,7 +640,10 @@ export class ShoesService {
     scanShoeId: string,
     preferred: ShoeView,
   ): Promise<void> {
-    const existing = await m.find(ShoePhotoEntity, { where: { shoeId } });
+    const existing = await m.find(ShoePhotoEntity, {
+      where: { shoeId },
+      order: { sortOrder: 'ASC', createdAt: 'ASC', id: 'ASC' },
+    });
     const oldScan = existing.filter((p) => p.source === 'scan');
     if (oldScan.length) {
       await m.delete(ShoePhotoEntity, { id: In(oldScan.map((p) => p.id)) });
@@ -590,6 +670,16 @@ export class ShoesService {
         pickPrimary(inserted, preferred) ?? uploads[0]?.id ?? null;
       await m.update(ShoeEntity, { id: shoeId }, { primaryPhotoId: primary });
     }
+    // Scan rows are fixed (four in, four out), so the cap holds by
+    // construction; this guard only covers entries backfilled from older data.
+    const overflow = inserted.length + uploads.length - this.cfg.maxPhotos;
+    if (overflow > 0) {
+      const drop = uploads.slice(uploads.length - overflow);
+      await m.delete(ShoePhotoEntity, { id: In(drop.map((p) => p.id)) });
+      this.logger.warn(
+        `shoe ${shoeId}: ${drop.length} upload(s) dropped to respect the cap`,
+      );
+    }
   }
 
   // ─── profile builder (shared by every owner response) ────────────────────
@@ -598,27 +688,34 @@ export class ShoesService {
     shoe: ShoeEntity,
     shareBase: string,
   ): Promise<ShoeProfileView> {
-    const [photos, share, mappings, feedback, rescan] = await Promise.all([
-      m.find(ShoePhotoEntity, {
-        where: { shoeId: shoe.id },
-        order: { sortOrder: 'ASC', createdAt: 'ASC' },
-      }),
-      m.findOne(ShoeShareEntity, {
-        where: { shoeId: shoe.id, revokedAt: IsNull() },
-      }),
-      this.catalog.conditionMappings(m),
-      m.findOne(ShoeFeedbackEntity, {
-        where: { shoeId: shoe.id, type: 'condition_suggested' },
-        order: { createdAt: 'DESC' },
-      }),
-      this.openRescan(m, shoe.id),
-    ]);
-    const scanShoe = shoe.scanShoeId
-      ? await m.findOne(ScanShoeEntity, {
-          where: { id: shoe.scanShoeId },
-          select: { id: true, scanId: true },
-        })
-      : null;
+    const [photos, share, mappings, feedback, rescan, scanShoe, shoeTypeRow] =
+      await Promise.all([
+        m.find(ShoePhotoEntity, {
+          where: { shoeId: shoe.id },
+          order: { sortOrder: 'ASC', createdAt: 'ASC' },
+        }),
+        m.findOne(ShoeShareEntity, {
+          where: { shoeId: shoe.id, revokedAt: IsNull() },
+        }),
+        this.catalog.conditionMappings(m),
+        m.findOne(ShoeFeedbackEntity, {
+          where: { shoeId: shoe.id, type: 'condition_suggested' },
+          order: { createdAt: 'DESC' },
+        }),
+        this.openRescan(m, shoe.id),
+        shoe.scanShoeId
+          ? m.findOne(ScanShoeEntity, {
+              where: { id: shoe.scanShoeId },
+              select: { id: true, scanId: true },
+            })
+          : null,
+        shoe.shoeTypeId
+          ? m.findOne(this.catalog.shoeTypeEntity(), {
+              where: { id: shoe.shoeTypeId },
+              select: { id: true, slug: true },
+            })
+          : null,
+      ]);
     const photoViews: ShoePhotoView[] = await Promise.all(
       photos.map(async (p) => ({
         id: p.id,
@@ -630,14 +727,7 @@ export class ShoesService {
         createdAt: new Date(p.createdAt).toISOString(),
       })),
     );
-    const shoeTypeSlug = shoe.shoeTypeId
-      ? ((
-          (await m.findOne(this.catalog.shoeTypeEntity(), {
-            where: { id: shoe.shoeTypeId },
-            select: { id: true, slug: true },
-          })) as { slug: string } | null
-        )?.slug ?? null)
-      : null;
+    const shoeTypeSlug = shoeTypeRow?.slug ?? null;
     const iso = (d: Date | null) => (d ? new Date(d).toISOString() : null);
     return {
       id: shoe.id,
@@ -765,52 +855,29 @@ export class ShoesService {
   }
 
   private requireStorage(): void {
-    if (!this.storage.isConfigured()) {
-      throw new ApiError(
-        HttpStatus.SERVICE_UNAVAILABLE,
-        'STORAGE_NOT_CONFIGURED',
-        'Photo storage is not available',
-      );
-    }
+    requireStorage(this.storage);
   }
 
-  private async putOrThrow(
+  private putOrThrow(
     key: string,
     body: Buffer,
     contentType: string,
   ): Promise<void> {
-    try {
-      await this.storage.put(key, body, contentType);
-    } catch (err) {
-      if (err instanceof StorageNotConfiguredError) this.requireStorage();
-      this.logger.error(
-        `put ${key} failed: ${err instanceof StorageUnavailableError ? err.message : String(err)}`,
-      );
-      throw new ApiError(
-        HttpStatus.BAD_GATEWAY,
-        'STORAGE_UNAVAILABLE',
-        'Photo storage failed, try again',
-      );
-    }
+    return putOrThrow(this.storage, this.logger, key, body, contentType);
   }
 
-  private async safeDelete(key: string): Promise<void> {
-    try {
-      await this.storage.delete(key);
-    } catch (err) {
-      this.logger.warn(`could not delete ${key}: ${String(err)}`);
-    }
+  private safeDelete(key: string): Promise<void> {
+    return safeDelete(this.storage, this.logger, key);
   }
 
   /** A signing failure never fails a profile read. */
-  private async signOrNull(key: string): Promise<string | null> {
-    if (!this.storage.isConfigured()) return null;
-    try {
-      return await this.storage.signedGetUrl(key, this.cfg.photoUrlTtlSeconds);
-    } catch (err) {
-      this.logger.warn(`could not sign ${key}: ${String(err)}`);
-      return null;
-    }
+  private signOrNull(key: string): Promise<string | null> {
+    return signOrNull(
+      this.storage,
+      this.logger,
+      key,
+      this.cfg.photoUrlTtlSeconds,
+    );
   }
 }
 
