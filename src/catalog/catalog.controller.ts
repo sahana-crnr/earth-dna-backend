@@ -52,11 +52,14 @@ export class CatalogController {
   @Header('Cache-Control', CACHE)
   @CatalogEndpoint('categories')
   @ApiOperation({
-    summary: 'E16 — categories with nested sub-categories (muted by default)',
+    summary:
+      'E16 — shoe types (Athletic Shoes, Casual Shoes, Dress Shoes, Boots, Sandals, Slippers) with the product categories mapped under each',
+    description:
+      'The Shoe Type dropdown of Edit shoe details and Find Your Shoe (F5-D20). Un-muted since F5; CATALOG_MUTED_ENDPOINTS=categories switches it off again.',
   })
   @ApiResponse({ status: 404, description: 'ENDPOINT_MUTED' })
   categories() {
-    return this.catalog.listCategories();
+    return this.catalog.listShoeTypes();
   }
 
   @Get('models')

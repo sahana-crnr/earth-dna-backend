@@ -1,6 +1,6 @@
 // F1 scan sessions + F2 identification results + F3 review: entities, services,
-// controllers, abandon job. F3 imports CatalogModule to resolve brand / size ids,
-// and ShoesModule for the My Shoes card mapper it shares with the F4 list. Multer limits come from scan config so uploads are capped before
+// controllers, abandon job. F3 imports CatalogModule to resolve brand / size ids
+// and ShoesModule (F5) for the value provider and the shoe_photos hooks. Multer limits come from scan config so uploads are capped before
 // bytes pile up in memory. F2 adds no Multer or storage dependency — results are
 // plain JSON and must keep working when SHOE_PHOTOS_BUCKET is unset.
 import { Module } from '@nestjs/common';

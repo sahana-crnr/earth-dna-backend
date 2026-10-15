@@ -26,12 +26,14 @@ import {
   titleCase,
   type ProductRow,
   type TaxonomyRow,
+  shoeTypeFor,
 } from '../src/catalog/catalog-rules';
 import { CatalogBrandEntity } from '../src/catalog/entities/catalog-brand.entity';
 import { CatalogBrandSubcategoryEntity } from '../src/catalog/entities/catalog-brand-subcategory.entity';
 import { CatalogCategoryEntity } from '../src/catalog/entities/catalog-category.entity';
 import { CatalogProductEntity } from '../src/catalog/entities/catalog-product.entity';
 import { CatalogSizeEntity } from '../src/catalog/entities/catalog-size.entity';
+import { CatalogShoeTypeEntity } from '../src/catalog/entities/catalog-shoe-type.entity';
 import { CatalogSubcategoryEntity } from '../src/catalog/entities/catalog-subcategory.entity';
 import { AppDataSource } from '../src/database/data-source';
 
@@ -134,13 +136,18 @@ async function main(): Promise<void> {
 
     await AppDataSource.transaction(async (m) => {
       const now = new Date();
-      // categories
+      // categories — each mapped onto a Figma shoe type by keyword (F5-D20)
+      const shoeTypeIds = new Map(
+        (await m.find(CatalogShoeTypeEntity)).map((t) => [t.slug, t.id]),
+      );
       const catIds = new Map<string, string>();
       for (const [i, c] of plan.categories.entries()) {
+        const typeSlug = shoeTypeFor(c.slug) ?? shoeTypeFor(c.name);
         const row = await upsertBySlug(m, CatalogCategoryEntity, c.slug, {
           name: c.name,
           sortOrder: i,
           isActive: true,
+          shoeTypeId: typeSlug ? (shoeTypeIds.get(typeSlug) ?? null) : null,
         });
         catIds.set(c.slug, row.id);
       }

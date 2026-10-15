@@ -52,6 +52,11 @@ export class ScanEntity {
   @Column({ type: 'timestamptz', nullable: true })
   finishedAt: Date | null;
 
+  /** F5-D10: set when the last My Shoes entry of this session is removed; the
+   *  session then disappears from GET /scans lists (rows and photos stay). */
+  @Column({ type: 'timestamptz', nullable: true })
+  hiddenAt: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 

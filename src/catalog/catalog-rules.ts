@@ -292,3 +292,103 @@ export function sizesByBrand(
   }
   return new Map([...acc].map(([k, v]) => [k, sizeOrder([...v])]));
 }
+
+// ─── F5-D20: product-DB category → Figma shoe type ───────────────────────────
+
+export const SHOE_TYPE_SLUGS = [
+  'athletic-shoes',
+  'casual-shoes',
+  'dress-shoes',
+  'boots',
+  'sandals',
+  'slippers',
+] as const;
+export type ShoeTypeSlug = (typeof SHOE_TYPE_SLUGS)[number];
+
+/** Whole-token match on the slugged text (PR 15 review: `workout` must not
+ *  hit `work`, `platform` must not hit `flat`); plurals are folded. First
+ *  type in this order with any hit wins (boot before shoe, sandal before
+ *  hiking). Null when nothing matches — the category stays untyped. */
+const SHOE_TYPE_KEYWORDS: readonly [ShoeTypeSlug, readonly string[]][] = [
+  ['boots', ['boot', 'bootie', 'chelsea']],
+  ['slippers', ['slipper', 'mule', 'clog', 'house']],
+  ['sandals', ['sandal', 'slide', 'flip', 'flop', 'thong', 'espadrille']],
+  [
+    'dress-shoes',
+    [
+      'dress',
+      'oxford',
+      'derby',
+      'loafer',
+      'brogue',
+      'pump',
+      'heel',
+      'wedge',
+      'platform',
+      'formal',
+      'monk',
+    ],
+  ],
+  [
+    'athletic-shoes',
+    [
+      'athletic',
+      'running',
+      'run',
+      'workout',
+      'training',
+      'hiking',
+      'sneaker',
+      'trainer',
+      'sport',
+      'basketball',
+      'tennis',
+      'golf',
+      'soccer',
+      'football',
+      'walking',
+      'trail',
+      'cross',
+      'fitness',
+      'gym',
+      'track',
+      'cleat',
+      'skate',
+      'cycling',
+    ],
+  ],
+  [
+    'casual-shoes',
+    [
+      'casual',
+      'fashion',
+      'flat',
+      'ballet',
+      'boat',
+      'deck',
+      'canvas',
+      'lifestyle',
+      'everyday',
+      'shoe',
+    ],
+  ],
+];
+
+export function shoeTypeFor(
+  categorySlugOrName: string | null,
+): ShoeTypeSlug | null {
+  const text = slugify(categorySlugOrName ?? '');
+  if (!text) return null;
+  const tokens = new Set(
+    text
+      .split('-')
+      .filter((t) => t.length > 0)
+      .map((t) =>
+        t.length > 3 && !t.endsWith('ss') ? t.replace(/s$/, '') : t,
+      ),
+  );
+  for (const [type, words] of SHOE_TYPE_KEYWORDS) {
+    if (words.some((w) => tokens.has(w))) return type;
+  }
+  return null;
+}

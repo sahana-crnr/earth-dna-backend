@@ -89,8 +89,6 @@ describe('F6-P1 toSummary', () => {
       valueCount: fc.nat({ max: 1000 }),
       valueMin: amount,
       valueMax: amount,
-      co2eCount: fc.nat({ max: 1000 }),
-      co2eKg: amount,
     })
     .chain((r) =>
       fc.record({
@@ -98,8 +96,6 @@ describe('F6-P1 toSummary', () => {
         valueCount: pgNum(r.valueCount),
         valueMin: r.valueCount ? pgNum(r.valueMin) : fc.constant(null),
         valueMax: r.valueCount ? pgNum(r.valueMax) : fc.constant(null),
-        co2eCount: pgNum(r.co2eCount),
-        co2eKg: r.co2eCount ? pgNum(r.co2eKg) : fc.constant(null),
       }),
     );
 
@@ -115,8 +111,6 @@ describe('F6-P1 toSummary', () => {
             max: Number(agg.valueMax),
             currency: 'USD',
           });
-        if (Number(agg.co2eCount) === 0) expect(s.co2eKg).toBeNull();
-        else expect(s.co2eKg).toBe(Number(agg.co2eKg));
       }),
     );
   });
@@ -128,13 +122,10 @@ describe('F6-P1 toSummary', () => {
         valueCount: '1',
         valueMin: 'garbage',
         valueMax: '12.345',
-        co2eCount: '2',
-        co2eKg: '0.1',
       }),
     ).toEqual({
       pairsScanned: 0,
       potentialValue: { min: 0, max: 12.35, currency: 'USD' },
-      co2eKg: 0.1,
     });
   });
 });

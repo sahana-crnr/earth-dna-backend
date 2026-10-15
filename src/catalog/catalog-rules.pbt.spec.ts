@@ -12,6 +12,7 @@ import {
   slugify,
   titleCase,
   type TaxonomyRow,
+  shoeTypeFor,
 } from './catalog-rules';
 
 const word = fc.stringMatching(/^[A-Za-z0-9 _-]{1,16}$/);
@@ -319,5 +320,32 @@ describe('importProducts / sizesByBrand', () => {
         { brandSlug: 'nike', size: '7.5' },
       ]).get('nike'),
     ).toEqual(['4', '7.5']);
+  });
+});
+
+describe('F5-D20 shoeTypeFor (whole-token match, PR 15)', () => {
+  it.each([
+    ['running_shoes', 'athletic-shoes'],
+    ['Athletic Shoes', 'athletic-shoes'],
+    ['workout-shoes', 'athletic-shoes'],
+    ['hiking-shoes', 'athletic-shoes'],
+    ['hiking-sandals', 'sandals'],
+    ['hiking-boots', 'boots'],
+    ['chelsea_boots', 'boots'],
+    ['platform-wedges', 'dress-shoes'],
+    ['dress-shoes', 'dress-shoes'],
+    ['loafers', 'dress-shoes'],
+    ['slippers', 'slippers'],
+    ['flip-flops', 'sandals'],
+    ['canvas-shoes', 'casual-shoes'],
+    ['specialty-footwear', null],
+    ['', null],
+  ])('%s → %s', (input, want) => {
+    expect(shoeTypeFor(input)).toBe(want);
+  });
+  it('never matches inside another word', () => {
+    expect(shoeTypeFor('workout')).toBe('athletic-shoes');
+    expect(shoeTypeFor('platform')).toBe('dress-shoes');
+    expect(shoeTypeFor('network')).toBeNull();
   });
 });

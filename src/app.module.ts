@@ -18,6 +18,7 @@ import {
   storageConfig,
   scanConfig,
   catalogConfig,
+  shoesConfig,
   adminConfig,
 } from './config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
@@ -46,6 +47,7 @@ import { IntegrationsModule } from './integrations/integrations.module';
         storageConfig,
         scanConfig,
         catalogConfig,
+        shoesConfig,
         adminConfig,
       ],
       cache: true,
@@ -87,7 +89,8 @@ import { IntegrationsModule } from './integrations/integrations.module';
     ScanModule,
     // F3 catalog lookups for the review form dropdowns.
     CatalogModule,
-    // F4 + F6 My Shoes list, filters and summary.
+
+    // F5 — My Shoes profile, edit, photos, share, rescan, condition feedback
     ShoesModule,
     // F7 admin-only model integration settings (ShoeDNA / ValueLens).
     IntegrationsModule,

@@ -19,20 +19,25 @@ import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { ApiError } from '../common/errors/api-error';
-import type { PhotoType, ScanConfig } from '../config/scan.config';
 import {
-  PhotoStorage,
-  StorageNotConfiguredError,
-  StorageUnavailableError,
-} from '../storage/photo-storage';
+  putOrThrow,
+  requireStorage,
+  safeDelete,
+  signOrNull,
+} from '../storage/photo-storage.ops';
+import {
+  validateUploadedPhoto,
+  type UploadedPhoto,
+} from '../storage/photo-upload.rules';
+import type { PhotoType, ScanConfig } from '../config/scan.config';
+import { PhotoStorage } from '../storage/photo-storage';
 import { ScanEntity } from './entities/scan.entity';
 import { ScanPhotoEntity } from './entities/scan-photo.entity';
 import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import {
   CONTENT_TYPE,
-  checkPhoto,
   computeShoeState,
   decideAlbumShoes,
   incompleteShoes,
@@ -45,6 +50,7 @@ import {
   type AlbumManifestShoe,
 } from './scan-rules';
 import {
+  assertDraftRoom,
   findOwnedScan,
   loadShoes,
   notFound,
@@ -60,12 +66,7 @@ import type {
   ScanSummaryView,
 } from './scan.view';
 
-/** Minimal file shape (subset of Express.Multer.File) the service needs. */
-export interface UploadedPhoto {
-  fieldname: string;
-  buffer: Buffer;
-  size: number;
-}
+export type { UploadedPhoto } from '../storage/photo-upload.rules';
 
 /** What a locked-transaction body hands back. */
 interface TxResult {
@@ -92,23 +93,7 @@ export class ScanService {
   async createDraft(userId: string): Promise<ScanSessionView> {
     this.requireStorage();
     const scan = await this.dataSource.transaction(async (m) => {
-      if (this.cfg.maxOpenDrafts > 0) {
-        // Serialise count+insert per user so a double tap cannot exceed the
-        // limit. Transaction-scoped advisory lock: released on commit/rollback.
-        await m.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-          `scan-draft:${userId}`,
-        ]);
-        const open = await m.count(ScanEntity, {
-          where: { userId, status: 'draft' },
-        });
-        if (open >= this.cfg.maxOpenDrafts) {
-          throw new ApiError(
-            HttpStatus.CONFLICT,
-            'DRAFT_LIMIT_REACHED',
-            `You can have at most ${this.cfg.maxOpenDrafts} open scans`,
-          );
-        }
-      }
+      await assertDraftRoom(m, userId, this.cfg.maxOpenDrafts);
       return m.save(
         m.create(ScanEntity, { userId, status: 'draft', source: 'camera' }),
       );
@@ -124,7 +109,10 @@ export class ScanService {
     limit: number,
     offset: number,
   ): Promise<ScanListView> {
-    const where = status ? { userId, status } : { userId };
+    // F5-D10: sessions whose every My Shoes entry was removed are hidden.
+    const where = status
+      ? { userId, status, hiddenAt: IsNull() }
+      : { userId, hiddenAt: IsNull() };
     const [rows, total] = await this.scans.findAndCount({
       where,
       // `id` tiebreaker keeps pages stable when updatedAt values collide.
@@ -721,81 +709,32 @@ export class ScanService {
   }
 
   /** A signing failure must never turn a saved change into an error. */
-  private async signOrNull(key: string, ttl: number): Promise<string | null> {
-    try {
-      return await this.storage.signedGetUrl(key, ttl);
-    } catch (err) {
-      this.logger.warn(`could not sign ${key}: ${String(err)}`);
-      return null;
-    }
+  private signOrNull(key: string, ttl: number): Promise<string | null> {
+    return signOrNull(this.storage, this.logger, key, ttl);
   }
 
+  /** Shared with F5 (E27): one rule for every photo upload. */
   private validatePhoto(file: UploadedPhoto | undefined): PhotoType {
-    const type = file ? sniffImageType(file.buffer) : null;
-    const rejection = checkPhoto(file ? { size: file.size, type } : undefined, {
+    return validateUploadedPhoto(file, {
       photoMaxBytes: this.cfg.photoMaxBytes,
       allowedTypes: this.cfg.photoAllowedTypes,
     });
-    if (rejection === 'FILE_REQUIRED') {
-      throw new ApiError(
-        HttpStatus.BAD_REQUEST,
-        'FILE_REQUIRED',
-        'A photo file is required',
-      );
-    }
-    if (rejection === 'FILE_TOO_LARGE') {
-      throw new ApiError(
-        HttpStatus.PAYLOAD_TOO_LARGE,
-        'FILE_TOO_LARGE',
-        `Photo must be at most ${this.cfg.photoMaxBytes} bytes`,
-      );
-    }
-    if (rejection === 'UNSUPPORTED_TYPE') {
-      throw new ApiError(
-        HttpStatus.UNSUPPORTED_MEDIA_TYPE,
-        'UNSUPPORTED_TYPE',
-        `Photo must be one of: ${this.cfg.photoAllowedTypes.join(', ')}`,
-      );
-    }
-    return type!;
   }
 
   private requireStorage(): void {
-    if (!this.storage.isConfigured()) {
-      throw new ApiError(
-        HttpStatus.SERVICE_UNAVAILABLE,
-        'STORAGE_NOT_CONFIGURED',
-        'Photo storage is not available',
-      );
-    }
+    requireStorage(this.storage);
   }
 
-  private async putOrThrow(
+  private putOrThrow(
     key: string,
     body: Buffer,
     contentType: string,
   ): Promise<void> {
-    try {
-      await this.storage.put(key, body, contentType);
-    } catch (err) {
-      if (err instanceof StorageNotConfiguredError) this.requireStorage();
-      this.logger.error(
-        `put ${key} failed: ${err instanceof StorageUnavailableError ? err.message : String(err)}`,
-      );
-      throw new ApiError(
-        HttpStatus.BAD_GATEWAY,
-        'STORAGE_UNAVAILABLE',
-        'Photo storage failed, try again',
-      );
-    }
+    return putOrThrow(this.storage, this.logger, key, body, contentType);
   }
 
-  private async safeDelete(key: string): Promise<void> {
-    try {
-      await this.storage.delete(key);
-    } catch (err) {
-      this.logger.warn(`could not delete ${key}: ${String(err)}`);
-    }
+  private safeDelete(key: string): Promise<void> {
+    return safeDelete(this.storage, this.logger, key);
   }
 }
 
