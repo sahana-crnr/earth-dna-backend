@@ -61,6 +61,11 @@ export class ScanResultsBuilder {
           m.find(ShoeEntity, { where: { scanShoeId: In(ids) } }),
         ])
       : [[], []];
+    // Primary photos of the entries, one query (F5-D17 replaced the copied key).
+    const [primaryKey, labels] = await Promise.all([
+      this.shoeViews.primaryKeysFor(m, entries),
+      this.shoeViews.conditionLabels(m),
+    ]);
     const resultByShoe = new Map(results.map((r) => [r.scanShoeId, r]));
     const entryByShoe = new Map(entries.map((e) => [e.scanShoeId, e]));
     // The brand prefill is only needed for shoes still waiting for a review;
@@ -96,7 +101,15 @@ export class ScanResultsBuilder {
           result: row ? toResultView(row, includeRaw) : null,
           review: reviewStateFor(s.status),
           myShoeId: entry?.id ?? null,
-          myShoe: entry ? await this.shoeViews.toMyShoeView(entry) : null,
+          myShoe: entry
+            ? await this.shoeViews.toMyShoeView(
+                entry,
+                entry.primaryPhotoId
+                  ? (primaryKey.get(entry.primaryPhotoId) ?? null)
+                  : null,
+                labels,
+              )
+            : null,
           suggested: {
             brandId: suggestedBrand?.id ?? null,
             brand: suggestedBrand?.name ?? predicted,

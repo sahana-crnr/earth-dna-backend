@@ -9,16 +9,20 @@
 // → overlay body on prediction → require a brand → silent product match →
 // insert shoes → insert shoe_feedback → set shoe status → maybe complete the
 // scan → touchScan → build the results view from the same manager (F3-D11).
-import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager, IsNull } from 'typeorm';
 import { CatalogService } from '../catalog/catalog.service';
 import { ApiError } from '../common/errors/api-error';
 import type { ScanConfig } from '../config/scan.config';
 import { ShoeEntity } from '../shoes/entities/shoe.entity';
+import { ShoesService } from '../shoes/shoes.service';
+import {
+  SHOE_VALUE_PROVIDER,
+  type ShoeValueProvider,
+} from '../shoes/value/shoe-value.provider';
 import type { ShoeDetailsDto } from './dto/shoe-details.dto';
 import { ScanEntity } from './entities/scan.entity';
-import { ScanPhotoEntity } from './entities/scan-photo.entity';
 import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
 import { ShoeFeedbackEntity } from './entities/shoe-feedback.entity';
@@ -27,8 +31,6 @@ import {
   isCompleted,
   missingFields,
   overlayDetails,
-  placeholderFor,
-  thumbnailKeyFor,
   type ReviewMode,
 } from './review-rules';
 import { findOwnedScan, notFound, touchScan } from './scan-access';
@@ -50,6 +52,8 @@ export class ScanReviewService {
     private readonly dataSource: DataSource,
     private readonly catalog: CatalogService,
     private readonly builder: ScanResultsBuilder,
+    private readonly shoes: ShoesService,
+    @Inject(SHOE_VALUE_PROVIDER) private readonly values: ShoeValueProvider,
     config: ConfigService,
   ) {
     this.cfg = config.get<ScanConfig>('scan')!;
@@ -194,11 +198,53 @@ export class ScanReviewService {
         identity.size,
       );
 
+      // ─── shoe type (F5-D20) ────────────────────────────────────────────
+      const shoeType = await this.catalog.shoeTypeForCategory(
+        m,
+        identity.category,
+      );
+      const valueFields = this.cfg.valuePlaceholder
+        ? await this.valueFields(shoe.id, identity)
+        : {};
+
+      // ─── rescan: update the existing entry in place (F5-D22) ───────────
+      const rescanOf = shoe.rescanOfShoeId
+        ? await m.findOne(ShoeEntity, {
+            where: { id: shoe.rescanOfShoeId, userId, deletedAt: IsNull() },
+            lock: { mode: 'pessimistic_write' },
+          })
+        : null;
+      if (shoe.rescanOfShoeId && !rescanOf) {
+        // PR 15 review: the pair was removed after the rescan started; never
+        // resurrect it as a fresh entry.
+        throw new ApiError(
+          HttpStatus.CONFLICT,
+          'RESCAN_TARGET_REMOVED',
+          'The shoe this rescan belongs to was removed',
+        );
+      }
+      if (rescanOf) {
+        const view = await this.completeRescan(m, {
+          userId,
+          mode,
+          scan,
+          shoe,
+          result,
+          existing: rescanOf,
+          identity,
+          resolvedBrandId: resolvedBrand?.id ?? null,
+          resolvedBrandName: resolvedBrand?.name ?? identity.brand,
+          sizeId: sizeRow?.id ?? null,
+          productId: product?.id ?? null,
+          msrp: product?.msrp ?? null,
+          shoeTypeId: shoeType?.id ?? null,
+          shoeTypeName: shoeType?.name ?? null,
+          valueFields,
+        });
+        return view;
+      }
+
       // ─── My Shoes entry ────────────────────────────────────────────────
-      const photos = await m.find(ScanPhotoEntity, {
-        where: { scanShoeId: shoe.id },
-        select: { view: true, s3Key: true },
-      });
       const entry = m.create(ShoeEntity, {
         userId,
         scanShoeId: shoe.id,
@@ -216,10 +262,18 @@ export class ScanReviewService {
         material: identity.material,
         catalogProductId: product?.id ?? null,
         msrp: product?.msrp ?? null,
-        primaryPhotoS3Key: thumbnailKeyFor(photos, this.cfg.thumbnailView),
-        ...(this.cfg.valuePlaceholder ? placeholderValues(shoe.id) : {}),
+        shoeTypeId: shoeType?.id ?? null,
+        shoeType: shoeType?.name ?? null,
+        ...valueFields,
       });
       const saved = await m.save(entry);
+      // shoe_photos rows for the captured views + primary (F5-D17)
+      await this.shoes.attachScanPhotos(
+        m,
+        saved.id,
+        shoe.id,
+        this.cfg.thumbnailView,
+      );
 
       // ─── training feedback (F3-D14) ────────────────────────────────────
       // save() rather than insert(): jsonb columns do not fit TypeORM's
@@ -284,19 +338,168 @@ export class ScanReviewService {
       return this.builder.build(m, scan, false, all);
     });
   }
+  /** Value fields for a new (or re-valued) entry via the provider (F5-D15). */
+  private async valueFields(
+    shoeId: string,
+    identity: {
+      brand: string | null;
+      model: string | null;
+      conditionCode: ShoeEntity['conditionCode'];
+    },
+  ): Promise<Partial<ShoeEntity>> {
+    const v = await this.values.valueFor({
+      shoeId,
+      brand: identity.brand,
+      model: identity.model,
+      conditionCode: identity.conditionCode,
+    });
+    return {
+      recommendedAction: v.recommendedAction,
+      resaleMin: v.resaleMin,
+      resaleMax: v.resaleMax,
+      resaleBucket: v.resaleBucket,
+      demandNote: v.demandNote,
+      recommendationReason: v.recommendationReason,
+      valueSource: v.source,
+      valueSourceVersion: v.version,
+      valueComputedAt: new Date(),
+    };
+  }
+
+  /**
+   * F5-D22: the review of a rescan shoe overwrites the existing My Shoes
+   * entry — identity from the new answer, condition from the new result, new
+   * scan photos, value via the provider while static — and records a
+   * `rescanned` feedback row holding the previous entry. The old scan session
+   * stays; share links keep working.
+   */
+  private async completeRescan(
+    m: EntityManager,
+    r: RescanInput,
+  ): Promise<ScanResultsView> {
+    const e = r.existing;
+    const previous = {
+      scanShoeId: e.scanShoeId,
+      brandId: e.brandId,
+      brand: e.brand,
+      subBrand: e.subBrand,
+      category: e.category,
+      subCategory: e.subCategory,
+      model: e.model,
+      colorway: e.colorway,
+      sizeId: e.sizeId,
+      size: e.size,
+      gender: e.gender,
+      conditionCode: e.conditionCode,
+      material: e.material,
+      shoeTypeId: e.shoeTypeId,
+      catalogProductId: e.catalogProductId,
+      msrp: e.msrp,
+    };
+    const patch: Partial<ShoeEntity> = {
+      scanShoeId: r.shoe.id,
+      brandId: r.resolvedBrandId,
+      brand: r.resolvedBrandName ?? e.brand,
+      subBrand: r.identity.subBrand,
+      category: r.identity.category,
+      subCategory: r.identity.subCategory,
+      model: r.identity.model,
+      colorway: r.identity.color,
+      // PR 15 review: size, gender and shoe type are what the user typed on the
+      // Edit screen and what ShoeDNA cannot know — keep them unless the body
+      // (or a mapped category) supplies a new value.
+      sizeId: r.sizeId ?? e.sizeId,
+      size: r.identity.size ?? e.size,
+      gender: r.identity.gender ?? e.gender,
+      conditionCode: r.identity.conditionCode,
+      material: r.identity.material,
+      shoeTypeId: r.shoeTypeId ?? e.shoeTypeId,
+      shoeType: r.shoeTypeName ?? e.shoeType,
+      catalogProductId: r.productId,
+      msrp: r.msrp,
+      ...(e.valueSource === 'static' ? r.valueFields : {}),
+    };
+    await m.update(ShoeEntity, { id: e.id }, patch);
+    await this.shoes.replaceScanPhotos(
+      m,
+      e.id,
+      r.shoe.id,
+      this.cfg.thumbnailView,
+    );
+    // The previous session no longer backs a live entry: hide it from lists.
+    await this.shoes.hideScanIfOrphaned(m, previous.scanShoeId);
+    await m.save(
+      m.create(ShoeFeedbackEntity, {
+        scanShoeId: r.shoe.id,
+        shoeId: e.id,
+        userId: r.userId,
+        type: 'rescanned',
+        modelVersion: r.result.modelVersion,
+        original: {
+          previous,
+          prediction: {
+            brand: r.result.brand,
+            subBrand: r.result.subBrand,
+            model: r.result.model,
+            colorway: r.result.colorway,
+            category: r.result.category,
+            subCategory: r.result.subCategory,
+            material: r.result.material,
+            confidence: r.result.confidence,
+            conditionCode: r.result.conditionCode,
+            outcome: r.result.outcome,
+            source: r.result.source,
+          },
+        },
+        answer: {
+          mode: r.mode,
+          brandId: r.resolvedBrandId,
+          brand: patch.brand,
+          model: patch.model,
+          color: patch.colorway,
+          sizeId: patch.sizeId,
+          size: patch.size,
+          gender: patch.gender,
+          conditionCode: patch.conditionCode,
+          catalogProductId: patch.catalogProductId,
+        },
+      }),
+    );
+    await m.update(
+      ScanShoeEntity,
+      { id: r.shoe.id },
+      { status: r.mode === 'confirm' ? 'confirmed' : 'rejected' },
+    );
+    const all = await m.find(ScanShoeEntity, {
+      where: { scanId: r.scan.id },
+      order: { position: 'ASC' },
+    });
+    if (isCompleted(all) && r.scan.status !== 'completed') {
+      await m.update(ScanEntity, { id: r.scan.id }, { status: 'completed' });
+      r.scan.status = 'completed';
+    }
+    await touchScan(m, r.scan.id);
+    this.logger.log(
+      `scan ${r.scan.id} shoe ${r.shoe.id} ${r.mode === 'confirm' ? 'confirmed' : 'rejected'} → rescan of my shoe ${e.id} applied`,
+    );
+    return this.builder.build(m, r.scan, false, all);
+  }
 }
 
-function placeholderValues(shoeId: string) {
-  const p = placeholderFor(shoeId);
-  return {
-    recommendedAction: p.recommendedAction,
-    resaleMin: p.resaleMin,
-    resaleMax: p.resaleMax,
-    resaleBucket: p.resaleBucket,
-    demandNote: p.demandNote,
-    recommendationReason: p.recommendationReason,
-    co2eKg: p.co2eKg,
-    valueSource: 'static' as const,
-    valueComputedAt: new Date(),
-  };
+interface RescanInput {
+  userId: string;
+  mode: ReviewMode;
+  scan: ScanEntity;
+  shoe: ScanShoeEntity;
+  result: ScanShoeResultEntity;
+  existing: ShoeEntity;
+  identity: ReturnType<typeof overlayDetails>;
+  resolvedBrandId: string | null;
+  resolvedBrandName: string | null;
+  sizeId: string | null;
+  productId: string | null;
+  msrp: number | null;
+  shoeTypeId: string | null;
+  shoeTypeName: string | null;
+  valueFields: Partial<ShoeEntity>;
 }

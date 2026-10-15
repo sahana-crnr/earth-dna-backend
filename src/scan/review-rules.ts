@@ -2,14 +2,12 @@
 // TypeORM or AWS imports so each function is property-tested directly, like
 // scan-rules.ts (F1) and result-rules.ts (F2).
 import {
-  SHOE_VIEWS,
   type ConditionCode,
   type Gender,
   type RecommendedAction,
   type ResaleBucket,
   type ReviewState,
   type ScanShoeStatus,
-  type ShoeView,
 } from './scan.types';
 
 // ─── F3-P1: overlay (body wins, prediction fills, never invents) ─────────────
@@ -166,7 +164,8 @@ export function missingFields(
   });
 }
 
-// ─── F3-P4: value placeholders (until ValueLens + CircularSort exist) ────────
+// ─── F3-P4: value placeholders (until the ValueLens endpoint exists) ────────
+// CO2e / carbon footprint is out of scope (decided 2026-10-09, tracker T28).
 
 export interface ValuePlaceholder {
   recommendedAction: RecommendedAction;
@@ -175,7 +174,6 @@ export interface ValuePlaceholder {
   resaleBucket: ResaleBucket | null;
   demandNote: string | null;
   recommendationReason: string;
-  co2eKg: number;
 }
 
 /** Exactly the option set the Figma shows (My Shoes cards + Shoe Profile). */
@@ -188,7 +186,6 @@ export const VALUE_PLACEHOLDERS: readonly ValuePlaceholder[] = [
     demandNote: 'High demand silhouette',
     recommendationReason:
       'Due to high demand and exceptional condition, keeping this pair in circulation maximizes value.',
-    co2eKg: 12.4,
   },
   {
     recommendedAction: 'repair',
@@ -198,7 +195,6 @@ export const VALUE_PLACEHOLDERS: readonly ValuePlaceholder[] = [
     demandNote: null,
     recommendationReason:
       'A small repair restores most of the resale value of this pair.',
-    co2eKg: 9.8,
   },
   {
     recommendedAction: 'resell',
@@ -208,7 +204,6 @@ export const VALUE_PLACEHOLDERS: readonly ValuePlaceholder[] = [
     demandNote: 'Steady demand',
     recommendationReason:
       'Good condition and steady demand make resale the best next step.',
-    co2eKg: 11.2,
   },
   {
     recommendedAction: 'recycle',
@@ -218,7 +213,6 @@ export const VALUE_PLACEHOLDERS: readonly ValuePlaceholder[] = [
     demandNote: null,
     recommendationReason:
       'Wear is beyond resale or repair; recycling recovers the materials.',
-    co2eKg: 6.5,
   },
 ];
 
@@ -244,21 +238,4 @@ export function resaleBucketFor(resaleMax: number | null): ResaleBucket | null {
   if (resaleMax <= 50) return 'from_25_to_50';
   if (resaleMax <= 100) return 'from_50_to_100';
   return 'over_100';
-}
-
-// ─── thumbnail ───────────────────────────────────────────────────────────────
-
-/** The configured view's key, else the first captured view in canonical order,
- *  else null (a reviewed shoe always has 4 photos, but the rule is total). */
-export function thumbnailKeyFor(
-  photos: readonly { view: ShoeView; s3Key: string }[],
-  preferred: ShoeView,
-): string | null {
-  const hit = photos.find((p) => p.view === preferred);
-  if (hit) return hit.s3Key;
-  for (const v of SHOE_VIEWS) {
-    const p = photos.find((x) => x.view === v);
-    if (p) return p.s3Key;
-  }
-  return null;
 }

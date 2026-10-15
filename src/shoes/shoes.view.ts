@@ -22,24 +22,27 @@ export interface MyShoeView {
   color: string | null;
   size: { id: string | null; label: string | null };
   gender: Gender | null;
+  /** F5-D20: Figma shoe type when the ShoeDNA category mapped. */
+  shoeType: { id: string | null; name: string | null };
   condition: { code: ConditionCode | null; label: string | null };
   material: string | null;
   recommendedAction: RecommendedAction | null;
   resale: { min: number | null; max: number | null; currency: string };
-  co2eKg: number | null;
   valueSource: ValueSource;
+  /** Signed URL of the primary shoe_photos row (F5-D17). */
   thumbnailUrl: string | null;
+  primaryPhotoId: string | null;
   createdAt: string;
 }
 
-/** E20 item: the card plus the two fields the Filters sheet keys on that the
+/** E31 item: the card plus the two fields the Filters sheet keys on that the
  *  F3 response has no use for. */
 export interface ShoeListItemView extends MyShoeView {
   actionTaken: ActionTaken;
   resaleBucket: ResaleBucket | null;
 }
 
-/** E20 — same paging envelope as E2 (`ScanListView`). */
+/** E31 — same paging envelope as E2 (`ScanListView`). */
 export interface ShoeListView {
   items: ShoeListItemView[];
   total: number;
@@ -47,11 +50,10 @@ export interface ShoeListView {
   offset: number;
 }
 
-/** E21 — Home stats card and the My Shoes header. `null` means "cannot be
+/** E32 — My Shoes header (Home no longer shows stats; CO2e dropped 2026-10-09). `null` means "cannot be
  *  computed yet" (no shoe carries the value), which the app renders as a
  *  friendly message rather than a misleading 0. */
 export interface ShoeSummaryView {
   pairsScanned: number;
   potentialValue: { min: number; max: number; currency: string } | null;
-  co2eKg: number | null;
 }

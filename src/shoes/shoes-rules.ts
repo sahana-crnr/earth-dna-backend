@@ -62,7 +62,7 @@ export function splitMulti(value: unknown): unknown {
   return [...new Set(out)];
 }
 
-// ─── F6-P1: summary ──────────────────────────────────────────────────────────
+// ─── F6-P1: summary (CO2e dropped 2026-10-09, F3.1) ─────────────────────────
 
 /** The one aggregate row E21 reads. Postgres returns numeric sums and bigint
  *  counts as strings, hence the unions. */
@@ -71,8 +71,6 @@ export interface SummaryAggregate {
   valueCount: string | number | null;
   valueMin: string | number | null;
   valueMax: string | number | null;
-  co2eCount: string | number | null;
-  co2eKg: string | number | null;
 }
 
 function num(v: string | number | null): number {
@@ -94,7 +92,6 @@ function round2(n: number): number {
  */
 export function toSummary(agg: SummaryAggregate): ShoeSummaryView {
   const valueCount = num(agg.valueCount);
-  const co2eCount = num(agg.co2eCount);
   return {
     pairsScanned: num(agg.pairs),
     potentialValue:
@@ -105,6 +102,5 @@ export function toSummary(agg: SummaryAggregate): ShoeSummaryView {
             currency: 'USD',
           }
         : null,
-    co2eKg: co2eCount > 0 ? round2(num(agg.co2eKg)) : null,
   };
 }

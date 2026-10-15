@@ -58,3 +58,29 @@ export async function touchScan(
     .where('id = :scanId', { scanId })
     .execute();
 }
+
+/**
+ * Per-user open-draft limit (E1 create, E29 rescan): count + insert are
+ * serialised by a transaction-scoped advisory lock so a double tap cannot
+ * exceed the limit. 0 = unlimited. One copy of the rule (PR 15 review).
+ */
+export async function assertDraftRoom(
+  m: EntityManager,
+  userId: string,
+  maxOpenDrafts: number,
+): Promise<void> {
+  if (maxOpenDrafts <= 0) return;
+  await m.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+    `scan-draft:${userId}`,
+  ]);
+  const open = await m.count(ScanEntity, {
+    where: { userId, status: 'draft' },
+  });
+  if (open >= maxOpenDrafts) {
+    throw new ApiError(
+      HttpStatus.CONFLICT,
+      'DRAFT_LIMIT_REACHED',
+      `You can have at most ${maxOpenDrafts} open scans`,
+    );
+  }
+}

@@ -43,7 +43,7 @@ export interface ShoeResultView {
 }
 
 /** F3: the My Shoes entry a review created; the shape lives with the shoes
- *  module, which F4 lists through the same mapper. */
+ *  module, which F4 lists through the same mapper (ShoeViewMapper). */
 export type { MyShoeView };
 
 export interface ShoeResultEntryView {

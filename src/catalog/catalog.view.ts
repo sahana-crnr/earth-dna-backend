@@ -29,6 +29,14 @@ export interface CategoryItemView extends SubcategoryItemView {
   subcategories: SubcategoryItemView[];
 }
 
+/** E16 (F5-D20): a Figma shoe type with the product-DB categories under it. */
+export interface ShoeTypeItemView {
+  id: string;
+  name: string;
+  slug: string;
+  categories: SubcategoryItemView[];
+}
+
 export interface ModelItemView {
   model: string;
   modelCode: string | null;

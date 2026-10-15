@@ -27,6 +27,7 @@ import { CatalogService } from '../catalog/catalog.service';
 import { CatalogBrandEntity } from '../catalog/entities/catalog-brand.entity';
 import { CatalogCategoryEntity } from '../catalog/entities/catalog-category.entity';
 import { CatalogProductEntity } from '../catalog/entities/catalog-product.entity';
+import { CatalogShoeTypeEntity } from '../catalog/entities/catalog-shoe-type.entity';
 import { CatalogSizeEntity } from '../catalog/entities/catalog-size.entity';
 import type { CatalogConfig } from '../config/catalog.config';
 import { SHOE_VIEWS } from './scan.types';
@@ -172,6 +173,7 @@ d('ScanResultService (integration, real Postgres)', () => {
           logging: false,
         }),
         TypeOrmModule.forFeature([
+          CatalogShoeTypeEntity,
           ScanEntity,
           ScanShoeEntity,
           ScanPhotoEntity,

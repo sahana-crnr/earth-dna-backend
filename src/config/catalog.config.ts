@@ -41,9 +41,10 @@ export default registerAs(
   }),
 );
 
-/** Default: `categories` muted (the form does not use it, F3-D17). */
+/** Default: nothing muted. `categories` was muted until F5 made it the shoe
+ *  type list for the Edit screen (F5-D20). */
 export function parseMuted(raw: string | undefined): MutableCatalogEndpoint[] {
-  if (raw === undefined) return ['categories'];
+  if (raw === undefined) return [];
   const out = new Set<MutableCatalogEndpoint>();
   for (const part of raw.split(',')) {
     const v = part.trim().toLowerCase();

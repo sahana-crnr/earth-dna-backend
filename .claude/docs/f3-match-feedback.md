@@ -1,5 +1,8 @@
 # F3 — Match Feedback and Catalog
 
+> **F5 (2026-10-12)**: a review now also creates `shoe_photos` rows (one per captured view) and sets `shoes.primaryPhotoId`; `primaryPhotoS3Key` is gone. The ShoeDNA category maps onto a Figma shoe type (`shoes.shoeTypeId`). The review of a **rescan** shoe (`scan_shoes.rescanOfShoeId`) updates the existing My Shoes entry in place instead of creating a new one (feedback type `rescanned`). Value fields come from the `ShoeValueProvider` (static placeholder today). See `f5-shoe-profile.md`.
+
+
 ## What it is
 The backend behind the review step of the S.H.O.E.S. flow (Figma section 3: Review Matches, Match Confirmed, Find Your Shoe, Matches confirmed). After F2 has stored a ShoeDNA result for every shoe in a session, the user looks at each shoe and either confirms the prediction ("That's my shoe") or rejects it ("Not my shoe"). In both cases the app shows a details form: the detected fields are prefilled and the user adds what ShoeDNA cannot see. The backend turns that answer into a My Shoes entry, keeps the original prediction plus the user's answer as training feedback, and closes the session once every shoe is reviewed. Six small catalog endpoints feed the form's dropdowns.
 
@@ -23,7 +26,7 @@ F1 stores the photos, F2 stores the prediction. F3 is the first step that create
 - Brand and size must be catalog ids. Model and colour are free text with length limits.
 - The user's answer wins over the prediction for brand, model and colour. Category, sub-category, condition and material are never in the body and always come from the prediction (F3-D5, D8). A predicted brand of "Unknown" counts as no brand: the user must pick one.
 - Every review writes one feedback row (prediction + answer + time): `confirmed` when the brand stood, `corrected` on reject or when the user changed the brand. Feedback rows are never changed or deleted; on account deletion the database keeps them with the user id cleared.
-- My Shoes value, recommendation and CO2e are placeholders until the ValueLens and CircularSort endpoints exist.
+- My Shoes value and recommendation are placeholders until the ValueLens endpoint exists. Carbon footprint / CO2e is out of scope (decided 2026-10-09).
 - The catalog is seeded by a re-runnable script from the S3 footwear taxonomy and the product export. No vendor name appears in tables, columns or routes.
 
 ## Status flow
@@ -51,7 +54,7 @@ Build, test locally, raise a PR, deploy to dev, test on dev with the browser tes
 ### Review and My Shoes
 | Table | Columns | Notes |
 |---|---|---|
-| `shoes` (My Shoes) | id, userId, scanShoeId (unique), brand, subBrand, category, subCategory, model, colorway, size, gender, conditionCode, material (null), recommendedAction, actionTaken, actionTakenAt, resaleMin, resaleMax, resaleCurrency, resaleBucket, demandNote, recommendationReason, co2eKg, valueSource, valueSourceVersion, valueComputedAt, catalogProductId, msrp, primaryPhotoS3Key, deletedAt, createdAt, updatedAt | Full F4/F5 schema created now (F3-D13b). F3 fills identity + placeholders; F4/F5 fill the rest |
+| `shoes` (My Shoes) | id, userId, scanShoeId (unique), brand, subBrand, category, subCategory, model, colorway, size, gender, conditionCode, material (null), recommendedAction, actionTaken, actionTakenAt, resaleMin, resaleMax, resaleCurrency, resaleBucket, demandNote, recommendationReason, valueSource, valueSourceVersion, valueComputedAt, catalogProductId, msrp, primaryPhotoS3Key, deletedAt, createdAt, updatedAt | Full F4/F5 schema created now (F3-D13b). F3 fills identity + placeholders; F4/F5 fill the rest |
 | `shoe_feedback` | id, scanShoeId, resultId, userId (null on account deletion), type `confirmed` / `corrected`, original jsonb, answer jsonb, createdAt | Append-only training signal (F3-D14, D15) |
 | `scan_shoe_results` (F2) | + `category`, `subCategory`, `material` (nullable) | F3-D18; E10 DTO gains the same optional fields |
 | `scan_shoes.status` | `confirmed` / `rejected` | values exist since F1 |
@@ -78,7 +81,7 @@ Size normalisation (source sizes are raw text: `8`, `8.5`, `10 Wide`, `9-10`, `M
 | `CATALOG_SOURCE_DB_HOST/PORT/USERNAME/PASSWORD/NAME` | unset | seed script only; read-only connection to the product database |
 | `CATALOG_MUTED_ENDPOINTS` | categories | comma list among `models,colours,categories,options` to answer 404 (app does not use them yet) |
 | `CATALOG_LIST_MAX` | 500 | hard cap on list size |
-| `SHOE_VALUE_PLACEHOLDER` | true | fill value / recommendation / CO2e with Figma placeholders on create |
+| `SHOE_VALUE_PLACEHOLDER` | true | fill value / recommendation with Figma placeholders on create |
 | `SHOE_THUMBNAIL_VIEW` | right | which scan view becomes the My Shoes thumbnail |
 
 ## 3. Endpoints
@@ -135,7 +138,7 @@ Muted catalog routes answer 404 `ENDPOINT_MUTED`. Error body: `{ statusCode, tim
 - **Review transaction** (confirm and reject share one path): lock the scan row (`findOwnedScan(…, lock)`), check status ∈ {`review`} (also `processing` when this shoe already has a result, so a slow sibling shoe never blocks review), load the shoe and its result, refuse if already reviewed or no result, resolve catalog ids, overlay body on result (body wins), require a brand, insert `shoes` row, insert `shoe_feedback` row, set `scan_shoes.status`, recompute `reviewed`, flip `scans.status` to `completed` when done == total, `touchScan`, build the results view inside the transaction.
 - **Overlay rule**: brand = body `brandId` if present, else the ShoeDNA brand (catalog-matched by slug when possible; "Unknown" counts as none → 400 `BRAND_REQUIRED`); model and color = body value, else the predicted value, else null; size and gender = body value or null. When the body changes the brand the predicted sub-brand is dropped. Category, subCategory, condition, material = F2 result as stored, never from the body.
 - **Feedback `original`** = the F2 result row as stored (brand, subBrand, model, colorway, confidence, conditionCode, modelVersion, candidates). **`answer`** = the resolved final fields. `type` = `corrected` for E13 and for an E12 that changed the brand, else `confirmed`.
-- **Placeholders** (`SHOE_VALUE_PLACEHOLDER=true`): `recommendedAction`, `resaleMin/Max`, `demandNote`, `recommendationReason`, `co2eKg` picked deterministically from the Figma option set by hashing the shoe id, so the same shoe always shows the same numbers; `valueSource = static`, `valueComputedAt = now`.
+- **Placeholders** (`SHOE_VALUE_PLACEHOLDER=true`): `recommendedAction`, `resaleMin/Max`, `demandNote`, `recommendationReason` picked deterministically from the Figma option set by hashing the shoe id, so the same shoe always shows the same numbers; `valueSource = static`, `valueComputedAt = now`.
 - **Thumbnail**: key of the `SHOE_THUMBNAIL_VIEW` photo, else the first photo by view order.
 - **Catalog match**: after overlay, candidates are the brand's products with the same model (case-insensitive, sku order). A candidate qualifies only when the colour or the size agrees; msrp only breaks ties. The best one gives `catalogProductId` and `msrp`; a miss stores nulls, never an error.
 - **Account deletion**: `ShoeReviewService.anonymiseForUser(userId)` sets `shoe_feedback.userId` null; `shoes` rows for the user are deleted; called by the future account-deletion flow before the user row goes.

@@ -28,7 +28,7 @@ export interface ScanConfig {
   resultMaxCandidates: number;
   /** Max serialized bytes of the `raw` ShoeDNA passthrough blob (F2). */
   resultRawMaxBytes: number;
-  /** F3: fill value / recommendation / CO2e on a new My Shoes entry with the
+  /** F3: fill value / recommendation on a new My Shoes entry with the
    *  Figma placeholder set until the ValueLens + CircularSort endpoints exist. */
   valuePlaceholder: boolean;
   /** F3: which captured view becomes the My Shoes thumbnail (F3-D3). */

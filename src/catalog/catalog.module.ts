@@ -11,6 +11,7 @@ import { CatalogBrandEntity } from './entities/catalog-brand.entity';
 import { CatalogBrandSubcategoryEntity } from './entities/catalog-brand-subcategory.entity';
 import { CatalogCategoryEntity } from './entities/catalog-category.entity';
 import { CatalogProductEntity } from './entities/catalog-product.entity';
+import { CatalogShoeTypeEntity } from './entities/catalog-shoe-type.entity';
 import { CatalogSizeEntity } from './entities/catalog-size.entity';
 import { CatalogSubcategoryEntity } from './entities/catalog-subcategory.entity';
 import { ConditionMappingEntity } from './entities/condition-mapping.entity';
@@ -20,6 +21,7 @@ import { ConditionMappingEntity } from './entities/condition-mapping.entity';
     AuthModule,
     TypeOrmModule.forFeature([
       CatalogCategoryEntity,
+      CatalogShoeTypeEntity,
       CatalogSubcategoryEntity,
       CatalogBrandEntity,
       CatalogBrandSubcategoryEntity,

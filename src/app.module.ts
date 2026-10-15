@@ -1,6 +1,5 @@
 // Root module of the application. Wires together config, database, and all
-// feature modules (AuthModule, UserModule, ScanModule, CatalogModule,
-// ShoesModule).
+// feature modules (AuthModule, UserModule, ScanModule, CatalogModule).
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -18,6 +17,7 @@ import {
   storageConfig,
   scanConfig,
   catalogConfig,
+  shoesConfig,
 } from './config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
@@ -44,6 +44,7 @@ import { ShoesModule } from './shoes/shoes.module';
         storageConfig,
         scanConfig,
         catalogConfig,
+        shoesConfig,
       ],
       cache: true,
     }),
@@ -84,7 +85,8 @@ import { ShoesModule } from './shoes/shoes.module';
     ScanModule,
     // F3 catalog lookups for the review form dropdowns.
     CatalogModule,
-    // F4 + F6 My Shoes list, filters and summary.
+
+    // F5 — My Shoes profile, edit, photos, share, rescan, condition feedback
     ShoesModule,
   ],
   controllers: [AppController],

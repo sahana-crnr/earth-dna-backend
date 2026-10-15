@@ -11,8 +11,10 @@ import { GENDERS } from '../scan/scan.types';
 import { CatalogBrandEntity } from './entities/catalog-brand.entity';
 import { CatalogCategoryEntity } from './entities/catalog-category.entity';
 import { CatalogProductEntity } from './entities/catalog-product.entity';
+import { CatalogShoeTypeEntity } from './entities/catalog-shoe-type.entity';
+import { ConditionMappingEntity } from './entities/condition-mapping.entity';
 import { CatalogSizeEntity } from './entities/catalog-size.entity';
-import { sizeSortKey, slugify } from './catalog-rules';
+import { shoeTypeFor, sizeSortKey, slugify } from './catalog-rules';
 import type {
   BrandItemView,
   CategoryItemView,
@@ -20,6 +22,7 @@ import type {
   ListView,
   ModelItemView,
   OptionsView,
+  ShoeTypeItemView,
   SizeItemView,
 } from './catalog.view';
 
@@ -39,6 +42,8 @@ export class CatalogService {
     private readonly sizes: Repository<CatalogSizeEntity>,
     @InjectRepository(CatalogProductEntity)
     private readonly products: Repository<CatalogProductEntity>,
+    @InjectRepository(CatalogShoeTypeEntity)
+    private readonly shoeTypes: Repository<CatalogShoeTypeEntity>,
     config: ConfigService,
   ) {
     this.cfg = config.get<CatalogConfig>('catalog')!;
@@ -84,7 +89,67 @@ export class CatalogService {
     };
   }
 
-  // ─── E16 categories (nested) ─────────────────────────────────────────────
+  // ─── E16 (F5-D20): shoe types with their mapped product categories ──────
+  async listShoeTypes(): Promise<ListView<ShoeTypeItemView>> {
+    const rows = await this.shoeTypes.find({
+      where: { isActive: true },
+      relations: { categories: true },
+      order: { sortOrder: 'ASC', name: 'ASC' },
+    });
+    return {
+      items: rows.map((t) => ({
+        id: t.id,
+        name: t.name,
+        slug: t.slug,
+        categories: (t.categories ?? [])
+          .filter((c) => c.isActive)
+          .sort(
+            (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+          )
+          .map((c) => ({ id: c.id, name: c.name, slug: c.slug })),
+      })),
+    };
+  }
+
+  async shoeTypeById(
+    m: EntityManager,
+    id: string,
+  ): Promise<CatalogShoeTypeEntity | null> {
+    return m.findOne(CatalogShoeTypeEntity, { where: { id, isActive: true } });
+  }
+
+  /** ShoeDNA / product-DB category text → shoe type row via the mapped
+   *  category, else the keyword rule; null when nothing matches. */
+  async shoeTypeForCategory(
+    m: EntityManager,
+    category: string | null,
+  ): Promise<CatalogShoeTypeEntity | null> {
+    const slug = slugify(category ?? '');
+    if (!slug) return null;
+    const mapped = await m.findOne(CatalogCategoryEntity, {
+      where: { slug, isActive: true },
+      relations: { shoeType: true },
+    });
+    if (mapped?.shoeType?.isActive) return mapped.shoeType;
+    const bySlug = shoeTypeFor(slug);
+    return bySlug
+      ? m.findOne(CatalogShoeTypeEntity, {
+          where: { slug: bySlug, isActive: true },
+        })
+      : null;
+  }
+
+  /** Entity class for callers that query shoe types through their own manager. */
+  shoeTypeEntity(): typeof CatalogShoeTypeEntity {
+    return CatalogShoeTypeEntity;
+  }
+
+  /** All five C1–C5 rows (F5-D5). Tiny table; read per request. */
+  conditionMappings(m: EntityManager): Promise<ConditionMappingEntity[]> {
+    return m.find(ConditionMappingEntity, { order: { sortOrder: 'ASC' } });
+  }
+
+  // ─── categories (nested; kept for the seed tests and admin tooling) ──────
   async listCategories(): Promise<ListView<CategoryItemView>> {
     const rows = await this.categories.find({
       where: { isActive: true },

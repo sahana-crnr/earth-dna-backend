@@ -59,7 +59,7 @@ describe('CatalogController wiring', () => {
     const svc = {
       listBrands: jest.fn().mockResolvedValue('b'),
       listSizes: jest.fn().mockResolvedValue('s'),
-      listCategories: jest.fn().mockResolvedValue('c'),
+      listShoeTypes: jest.fn().mockResolvedValue('c'),
       listModels: jest.fn().mockResolvedValue('m'),
       listColours: jest.fn().mockResolvedValue('k'),
       options: jest.fn().mockReturnValue('o'),
