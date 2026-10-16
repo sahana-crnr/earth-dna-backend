@@ -30,6 +30,7 @@ import { SocialIdentity } from './social/social-identity';
 import { UserEntity } from '../user/entities/user.entity';
 import { AuthResponse } from './interfaces/auth-response.interface';
 import { ApiError } from '../common/errors/api-error';
+import type { AdminConfig } from '../config/admin.config';
 
 export const BCRYPT_SALT_ROUNDS = 10;
 
@@ -90,9 +91,13 @@ export class AuthService {
     return this.issueTokens(user, userAgent);
   }
 
+  // ADMIN_EMAIL is reserved even before the admin row exists: otherwise anyone
+  // could register it first and AdminBootstrapService would promote their
+  // account on the next boot. It answers exactly like a taken email, so the
+  // response does not reveal which address is the admin.
   async register(dto: RegisterDto, userAgent?: string): Promise<AuthResponse> {
     const existing = await this.userService.findByEmail(dto.email);
-    if (existing) {
+    if (existing || this.isAdminEmail(dto.email)) {
       throw new ConflictException('An account with this email already exists');
     }
 
@@ -103,6 +108,13 @@ export class AuthService {
     });
 
     return this.issueTokens(user, userAgent);
+  }
+
+  private isAdminEmail(email: string): boolean {
+    const adminEmail = this.config.get<AdminConfig>('admin')?.email;
+    return (
+      !!adminEmail && adminEmail.toLowerCase() === email.trim().toLowerCase()
+    );
   }
 
   async login(dto: LoginDto, userAgent?: string): Promise<AuthResponse> {

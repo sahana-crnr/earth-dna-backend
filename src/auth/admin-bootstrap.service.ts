@@ -1,11 +1,17 @@
 // Syncs the single F7 admin from env (ADMIN_EMAIL / ADMIN_PASSWORD) into the
-// users table on every boot. Env is the source of truth:
+// users table on every boot. Valid env credentials are the source of truth:
 //   - the ADMIN_EMAIL account is created (local, bcrypt hash) or promoted;
 //   - its hash is rewritten only when it no longer matches ADMIN_PASSWORD, so
-//     an ordinary boot writes nothing; a rewrite also revokes its sessions;
+//     an ordinary boot writes nothing;
+//   - a promotion or a rewrite signs that account out everywhere. A promoted
+//     row may have been registered by someone else before ADMIN_EMAIL was set,
+//     and their existing refresh token must not become an admin session;
 //   - every OTHER admin row is demoted, so changing ADMIN_EMAIL moves the role
-//     rather than adding a second admin;
-//   - unset or weak credentials mean no admin at all (fail closed).
+//     rather than adding a second admin.
+//
+// Unset or weak credentials change nothing (a warning only): a broken secret
+// during a deploy must not lock everyone out of the admin panel. Removing the
+// admin takes the explicit ADMIN_DISABLE=true, which demotes every admin.
 //
 // An ADMIN_EMAIL that already belongs to a social (Google/Facebook/Apple)
 // account is refused, not taken over: promoting it would hand admin to whoever
@@ -37,6 +43,7 @@ export type AdminSyncOutcome =
   | 'updated'
   | 'unchanged'
   | 'disabled'
+  | 'skipped'
   | 'refused';
 
 @Injectable()
@@ -61,12 +68,19 @@ export class AdminBootstrapService implements OnApplicationBootstrap {
   }
 
   async sync(): Promise<AdminSyncOutcome> {
-    const { email, password } = this.config.get<AdminConfig>('admin') ?? {
-      email: null,
-      password: null,
-    };
+    const { email, password, disabled } = this.config.get<AdminConfig>(
+      'admin',
+    ) ?? { email: null, password: null, disabled: false };
     const usable =
       !!email && !!password && password.length >= ADMIN_PASSWORD_MIN_LENGTH;
+
+    if (!disabled && !usable) {
+      this.logger.warn(
+        `Admin credentials unusable (ADMIN_EMAIL unset or ADMIN_PASSWORD shorter than ${ADMIN_PASSWORD_MIN_LENGTH} chars); ` +
+          'existing admin left unchanged. Set ADMIN_DISABLE=true to remove it.',
+      );
+      return 'skipped';
+    }
 
     const { outcome, adminId } = await this.dataSource.transaction<{
       outcome: AdminSyncOutcome;
@@ -77,14 +91,16 @@ export class AdminBootstrapService implements OnApplicationBootstrap {
       ]);
       const repo = m.getRepository(UserEntity);
 
-      if (!usable) {
+      if (disabled) {
         const demoted = await this.demoteAdminsExcept(repo, null);
         this.logger.warn(
-          `No admin configured (ADMIN_EMAIL unset or ADMIN_PASSWORD shorter than ${ADMIN_PASSWORD_MIN_LENGTH} chars)` +
-            (demoted ? `; demoted ${demoted} existing admin(s)` : ''),
+          `ADMIN_DISABLE=true; no admin is active` +
+            (demoted ? ` (demoted ${demoted} admin(s))` : ''),
         );
         return { outcome: 'disabled', adminId: null };
       }
+      // Type narrowing only: the `usable` check above already guarantees both.
+      if (!email || !password) return { outcome: 'skipped', adminId: null };
 
       const existing = await repo.findOne({
         where: { email },
@@ -149,9 +165,9 @@ export class AdminBootstrapService implements OnApplicationBootstrap {
       return { outcome, adminId };
     });
 
-    // A rotated ADMIN_PASSWORD signs the admin out everywhere, after commit so
-    // the transaction holds no lock across the extra write.
-    if (outcome === 'updated' && adminId) {
+    // A promotion or a rotated ADMIN_PASSWORD signs the account out everywhere,
+    // after commit so the transaction holds no lock across the extra write.
+    if ((outcome === 'promoted' || outcome === 'updated') && adminId) {
       await this.refreshTokens.revokeAllForUser(adminId);
     }
     return outcome;

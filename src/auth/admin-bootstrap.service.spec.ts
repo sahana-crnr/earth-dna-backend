@@ -51,7 +51,11 @@ describe('AdminBootstrapService', () => {
     };
     query = jest.fn().mockResolvedValue(undefined);
     revokeAllForUser = jest.fn().mockResolvedValue(undefined);
-    adminCfg = { email: 'admin@earthdna.test', password: GOOD };
+    adminCfg = {
+      email: 'admin@earthdna.test',
+      password: GOOD,
+      disabled: false,
+    };
 
     const m = { query, getRepository: () => repo };
     const ds = {
@@ -87,7 +91,9 @@ describe('AdminBootstrapService', () => {
     expect(await bcrypt.compare(GOOD, hashOf(saved))).toBe(true);
   });
 
-  it('promotes an existing local USER', async () => {
+  // The row may have been registered by someone else before ADMIN_EMAIL was
+  // set: their refresh token must not survive into an admin session.
+  it('promotes an existing local USER and signs it out everywhere', async () => {
     repo.findOne.mockResolvedValue({
       id: 'u1',
       role: 'USER',
@@ -96,6 +102,22 @@ describe('AdminBootstrapService', () => {
     });
     await expect(svc.sync()).resolves.toBe('promoted');
     expect(repo.update).toHaveBeenCalledWith('u1', { role: 'ADMIN' });
+    expect(revokeAllForUser).toHaveBeenCalledWith('u1');
+  });
+
+  it('promotes and rehashes in one boot, still signing the account out', async () => {
+    repo.findOne.mockResolvedValue({
+      id: 'u1',
+      role: 'USER',
+      authProvider: 'local',
+      password: await bcrypt.hash('a-stranger-password', 4),
+    });
+    await expect(svc.sync()).resolves.toBe('promoted');
+    expect(revokeAllForUser).toHaveBeenCalledWith('u1');
+  });
+
+  it('does not revoke anything when the admin is created fresh', async () => {
+    await expect(svc.sync()).resolves.toBe('created');
     expect(revokeAllForUser).not.toHaveBeenCalled();
   });
 
@@ -109,6 +131,7 @@ describe('AdminBootstrapService', () => {
     await expect(svc.sync()).resolves.toBe('unchanged');
     expect(repo.update).not.toHaveBeenCalledWith('u1', expect.anything());
     expect(repo.save).not.toHaveBeenCalled();
+    expect(revokeAllForUser).not.toHaveBeenCalled();
   });
 
   it('rehashes a rotated ADMIN_PASSWORD and revokes the admin sessions', async () => {
@@ -149,17 +172,33 @@ describe('AdminBootstrapService', () => {
     expect(demoteCalls()[0]).toEqual([{ role: 'ADMIN' }, { role: 'USER' }]);
   });
 
+  // A broken secret during a deploy must not lock everyone out.
   it.each([
     ['email unset', { email: null, password: GOOD }],
     ['password unset', { email: 'admin@earthdna.test', password: null }],
     ['password too short', { email: 'admin@earthdna.test', password: 'short' }],
-  ])('fails closed when %s: demotes all admins, creates none', async (_, c) => {
-    adminCfg = c;
-    await expect(svc.sync()).resolves.toBe('disabled');
+  ])('leaves the current admin alone when %s', async (_, c) => {
+    adminCfg = { ...c, disabled: false };
+    await expect(svc.sync()).resolves.toBe('skipped');
+    expect(query).not.toHaveBeenCalled();
     expect(repo.findOne).not.toHaveBeenCalled();
     expect(repo.save).not.toHaveBeenCalled();
-    expect(demoteCalls()[0]).toEqual([{ role: 'ADMIN' }, { role: 'USER' }]);
+    expect(repo.update).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['valid credentials', { email: 'admin@earthdna.test', password: GOOD }],
+    ['no credentials', { email: null, password: null }],
+  ])(
+    'ADMIN_DISABLE=true demotes every admin and creates none (%s)',
+    async (_, c) => {
+      adminCfg = { ...c, disabled: true };
+      await expect(svc.sync()).resolves.toBe('disabled');
+      expect(repo.findOne).not.toHaveBeenCalled();
+      expect(repo.save).not.toHaveBeenCalled();
+      expect(demoteCalls()[0]).toEqual([{ role: 'ADMIN' }, { role: 'USER' }]);
+    },
+  );
 
   it('logs rather than throws at boot, so a failure never stops the app', async () => {
     query.mockRejectedValue(new Error('db down'));

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
   BadRequestException,
+  ConflictException,
   UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -156,6 +157,11 @@ describe('AuthService', () => {
                 // supplied mail.frontendUrl, which the service never reads.
                 'mail.backendUrl': 'http://localhost:1234',
                 'app.apiPrefix': 'api/v1',
+                admin: {
+                  email: 'admin@earthdna.test',
+                  password: 'a-long-admin-password',
+                  disabled: false,
+                },
               };
               return map[key];
             }),
@@ -166,6 +172,39 @@ describe('AuthService', () => {
 
     service = module.get<AuthService>(AuthService);
     jwtService = module.get(JwtService);
+  });
+
+  describe('register - ADMIN_EMAIL is reserved (F7)', () => {
+    const dto = {
+      fullName: 'Mallory',
+      email: 'admin@earthdna.test',
+      password: 'Password123!',
+      country: 'USA',
+    } as Parameters<AuthService['register']>[0];
+
+    beforeEach(() => userService.findByEmail.mockResolvedValue(null));
+
+    it.each(['admin@earthdna.test', 'Admin@EarthDNA.test'])(
+      'answers %s with the same 409 as a taken email, before creating anything',
+      async (email) => {
+        const err = await service
+          .register({ ...dto, email })
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).message).toBe(
+          'An account with this email already exists',
+        );
+        expect(userService.create).not.toHaveBeenCalled();
+        expect(refreshTokenService.issue).not.toHaveBeenCalled();
+      },
+    );
+
+    it('still registers any other address', async () => {
+      userService.create.mockResolvedValue(mockUser);
+      await expect(
+        service.register({ ...dto, email: 'jane@example.com' }),
+      ).resolves.toMatchObject({ accessToken: 'jwt-token' });
+    });
   });
 
   describe('forgotPassword', () => {

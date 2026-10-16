@@ -12,7 +12,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * ADD COLUMN with a constant DEFAULT is metadata-only in PostgreSQL 11+: no
  * table rewrite.
  */
-export class AddUserRole1792000000000 implements MigrationInterface {
+export class AddUserRole1792200000000 implements MigrationInterface {
   public async up(q: QueryRunner): Promise<void> {
     await q.query(
       `ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "role" character varying(20) NOT NULL DEFAULT 'USER'`,

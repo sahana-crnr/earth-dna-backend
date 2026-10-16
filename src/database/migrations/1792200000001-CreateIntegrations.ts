@@ -12,7 +12,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * - updatedById is ON DELETE SET NULL: the setting outlives the admin account.
  * - authRef holds a secret's NAME, never the secret (see the entity).
  */
-export class CreateIntegrations1792000000001 implements MigrationInterface {
+export class CreateIntegrations1792200000001 implements MigrationInterface {
   public async up(q: QueryRunner): Promise<void> {
     await q.query(`
       CREATE TABLE "integrations" (
