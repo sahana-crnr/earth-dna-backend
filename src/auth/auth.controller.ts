@@ -322,6 +322,11 @@ export class AuthController {
     description:
       'Invalid, expired, or wrong-audience token; or the Google email is unverified',
   })
+  @ApiResponse({
+    status: 403,
+    description:
+      'ADMIN_PASSWORD_LOGIN_ONLY — the matching account is the admin, which signs in with POST /auth/login only',
+  })
   @ApiResponse({ status: 429, description: 'Too many requests' })
   googleLogin(
     @Body() dto: GoogleLoginDto,
@@ -355,6 +360,11 @@ export class AuthController {
     status: 422,
     description: 'Token is valid but the Facebook account has no email address',
   })
+  @ApiResponse({
+    status: 403,
+    description:
+      'ADMIN_PASSWORD_LOGIN_ONLY — the matching account is the admin, which signs in with POST /auth/login only',
+  })
   @ApiResponse({ status: 429, description: 'Too many requests' })
   facebookLogin(
     @Body() dto: FacebookLoginDto,
@@ -381,6 +391,11 @@ export class AuthController {
     status: 401,
     description:
       'Invalid, expired, or wrong-audience token; or the Apple email is unverified',
+  })
+  @ApiResponse({
+    status: 403,
+    description:
+      'ADMIN_PASSWORD_LOGIN_ONLY — the matching account is the admin, which signs in with POST /auth/login only',
   })
   @ApiResponse({ status: 429, description: 'Too many requests' })
   appleLogin(

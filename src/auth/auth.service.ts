@@ -9,6 +9,7 @@ import {
   BadRequestException,
   UnprocessableEntityException,
   Logger,
+  HttpStatus,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -28,8 +29,10 @@ import { AppleTokenVerifier } from './apple/apple-token-verifier';
 import { SocialIdentity } from './social/social-identity';
 import { UserEntity } from '../user/entities/user.entity';
 import { AuthResponse } from './interfaces/auth-response.interface';
+import { ApiError } from '../common/errors/api-error';
+import type { AdminConfig } from '../config/admin.config';
 
-const BCRYPT_SALT_ROUNDS = 10;
+export const BCRYPT_SALT_ROUNDS = 10;
 
 @Injectable()
 export class AuthService {
@@ -46,16 +49,23 @@ export class AuthService {
     private readonly appleVerifier: AppleTokenVerifier,
   ) {}
 
+  // `role` (F7) is for the client only - RolesGuard re-reads it from the DB, so
+  // a demotion takes effect before this token expires.
+  private signAccessToken(user: UserEntity): string {
+    return this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    });
+  }
+
   // Signs a short-lived access JWT and issues a rotating refresh token.
   // Used by register, login, and refresh so token issuance stays consistent.
   private async issueTokens(
     user: UserEntity,
     userAgent?: string,
   ): Promise<AuthResponse> {
-    const accessToken = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-    });
+    const accessToken = this.signAccessToken(user);
     const refreshToken = await this.refreshTokenService.issue(
       user.id,
       userAgent,
@@ -64,9 +74,30 @@ export class AuthService {
     return { accessToken, refreshToken, user };
   }
 
+  // Social sign-in auto-links by email, so without this anyone holding a
+  // provider identity for ADMIN_EMAIL would get an admin session without the
+  // admin password. The admin signs in with POST /auth/login only (F7).
+  private issueSocialTokens(
+    user: UserEntity,
+    userAgent?: string,
+  ): Promise<AuthResponse> {
+    if (user.role === 'ADMIN') {
+      throw new ApiError(
+        HttpStatus.FORBIDDEN,
+        'ADMIN_PASSWORD_LOGIN_ONLY',
+        'This account must sign in with email and password',
+      );
+    }
+    return this.issueTokens(user, userAgent);
+  }
+
+  // ADMIN_EMAIL is reserved even before the admin row exists: otherwise anyone
+  // could register it first and AdminBootstrapService would promote their
+  // account on the next boot. It answers exactly like a taken email, so the
+  // response does not reveal which address is the admin.
   async register(dto: RegisterDto, userAgent?: string): Promise<AuthResponse> {
     const existing = await this.userService.findByEmail(dto.email);
-    if (existing) {
+    if (existing || this.isAdminEmail(dto.email)) {
       throw new ConflictException('An account with this email already exists');
     }
 
@@ -77,6 +108,13 @@ export class AuthService {
     });
 
     return this.issueTokens(user, userAgent);
+  }
+
+  private isAdminEmail(email: string): boolean {
+    const adminEmail = this.config.get<AdminConfig>('admin')?.email;
+    return (
+      !!adminEmail && adminEmail.toLowerCase() === email.trim().toLowerCase()
+    );
   }
 
   async login(dto: LoginDto, userAgent?: string): Promise<AuthResponse> {
@@ -113,10 +151,7 @@ export class AuthService {
       await this.refreshTokenService.rotate(rawToken, userAgent);
     const user = await this.userService.findById(userId);
 
-    const accessToken = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-    });
+    const accessToken = this.signAccessToken(user);
 
     return { accessToken, refreshToken, user };
   }
@@ -164,7 +199,7 @@ export class AuthService {
 
     // Same token issuance as login()/register() - so the response carries a
     // refreshToken too and the app needs no special-casing.
-    return this.issueTokens(user, userAgent);
+    return this.issueSocialTokens(user, userAgent);
   }
 
   /**
@@ -245,7 +280,7 @@ export class AuthService {
       this.logger.log(`Created account from ${label} sign-in: ${user.email}`);
     }
 
-    return this.issueTokens(user, userAgent);
+    return this.issueSocialTokens(user, userAgent);
   }
 
   getProfile(userId: string): Promise<UserEntity> {

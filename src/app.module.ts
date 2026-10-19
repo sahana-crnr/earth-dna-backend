@@ -1,5 +1,6 @@
 // Root module of the application. Wires together config, database, and all
-// feature modules (AuthModule, UserModule, ScanModule, CatalogModule).
+// feature modules (AuthModule, UserModule, ScanModule, CatalogModule,
+// ShoesModule, IntegrationsModule).
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -18,6 +19,7 @@ import {
   scanConfig,
   catalogConfig,
   shoesConfig,
+  adminConfig,
 } from './config';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
@@ -27,6 +29,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ScanModule } from './scan/scan.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { ShoesModule } from './shoes/shoes.module';
+import { IntegrationsModule } from './integrations/integrations.module';
 
 @Module({
   imports: [
@@ -45,6 +48,7 @@ import { ShoesModule } from './shoes/shoes.module';
         scanConfig,
         catalogConfig,
         shoesConfig,
+        adminConfig,
       ],
       cache: true,
     }),
@@ -88,6 +92,8 @@ import { ShoesModule } from './shoes/shoes.module';
 
     // F5 — My Shoes profile, edit, photos, share, rescan, condition feedback
     ShoesModule,
+    // F7 admin-only model integration settings (ShoeDNA / ValueLens).
+    IntegrationsModule,
   ],
   controllers: [AppController],
   providers: [

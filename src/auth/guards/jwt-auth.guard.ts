@@ -9,10 +9,13 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
+import type { UserRole } from '../../user/user-roles';
 
 interface JwtPayload {
   sub: string;
   email: string;
+  /** Absent on tokens issued before F7. Informational - see RolesGuard. */
+  role?: UserRole;
 }
 
 @Injectable()
