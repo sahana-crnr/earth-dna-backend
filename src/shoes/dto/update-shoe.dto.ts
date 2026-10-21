@@ -19,9 +19,7 @@ import {
   type ActionTaken,
   type Gender,
 } from '../../scan/scan.types';
-
-const trim = ({ value }: { value: unknown }) =>
-  typeof value === 'string' ? value.trim() : value;
+import { trim } from '../../common/transforms/string.transforms';
 
 export class UpdateShoeDto {
   @ApiPropertyOptional({

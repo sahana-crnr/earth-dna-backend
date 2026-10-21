@@ -9,7 +9,12 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { AuthService } from './auth.service';
+import { DataSource } from 'typeorm';
+import {
+  AuthService,
+  FORGOT_PASSWORD_MESSAGE,
+  RESET_PASSWORD_MESSAGE,
+} from './auth.service';
 import { ApiError } from '../common/errors/api-error';
 import { UserService } from '../user/user.service';
 import { MailService } from '../mail/mail.service';
@@ -19,6 +24,10 @@ import { GoogleTokenVerifier } from './google/google-token-verifier';
 import { FacebookTokenVerifier } from './facebook/facebook-token-verifier';
 import { AppleTokenVerifier } from './apple/apple-token-verifier';
 import { SocialIdentity } from './social/social-identity';
+
+// The reset email is sent after the response; let that detached work finish.
+const flushDetached = () => new Promise((resolve) => setImmediate(resolve));
+const manager = { stand: 'in EntityManager' };
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -31,8 +40,7 @@ describe('AuthService', () => {
       | 'findById'
       | 'setResetToken'
       | 'clearResetToken'
-      | 'findByResetToken'
-      | 'updatePassword'
+      | 'consumeResetToken'
       | 'createGoogleUser'
       | 'findByProvider'
       | 'createSocialUser'
@@ -88,8 +96,7 @@ describe('AuthService', () => {
       findById: jest.fn(),
       setResetToken: jest.fn().mockResolvedValue(undefined),
       clearResetToken: jest.fn().mockResolvedValue(undefined),
-      findByResetToken: jest.fn(),
-      updatePassword: jest.fn().mockResolvedValue(undefined),
+      consumeResetToken: jest.fn(),
       createGoogleUser: jest.fn(),
       findByProvider: jest.fn().mockResolvedValue(null),
       createSocialUser: jest.fn(),
@@ -146,6 +153,13 @@ describe('AuthService', () => {
         },
         { provide: FacebookTokenVerifier, useValue: facebookVerifier },
         { provide: AppleTokenVerifier, useValue: appleVerifier },
+        // transaction(cb) just runs cb with a stand-in manager.
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: jest.fn((cb: (m: unknown) => unknown) => cb(manager)),
+          },
+        },
         {
           provide: ConfigService,
           useValue: {
@@ -208,9 +222,6 @@ describe('AuthService', () => {
   });
 
   describe('forgotPassword', () => {
-    const GENERIC =
-      'If an account with that email exists, a password reset link has been sent.';
-
     // T11: an unknown email must answer exactly like a known one, otherwise the
     // endpoint tells anyone which addresses have accounts.
     it('answers an unknown email exactly like a known one (T11)', async () => {
@@ -220,18 +231,34 @@ describe('AuthService', () => {
       userService.findByEmail.mockResolvedValue(mockUser);
       const known = await service.forgotPassword(mockUser.email);
 
-      expect(unknown).toEqual({ message: GENERIC });
+      expect(unknown).toEqual({ message: FORGOT_PASSWORD_MESSAGE });
       expect(known).toEqual(unknown);
-      expect(userService.setResetToken).toHaveBeenCalledTimes(1);
+    });
+
+    // Timing half of T11: both branches return right after the one lookup.
+    it('responds before the token write or the SES call even start', async () => {
+      userService.findByEmail.mockResolvedValue(mockUser);
+      let releaseWrite!: () => void;
+      userService.setResetToken.mockReturnValue(
+        new Promise<void>((resolve) => (releaseWrite = resolve)),
+      );
+
+      await expect(service.forgotPassword(mockUser.email)).resolves.toEqual({
+        message: FORGOT_PASSWORD_MESSAGE,
+      });
+      expect(mailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+
+      releaseWrite();
+      await flushDetached();
       expect(mailService.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
     });
 
-    it('stores hashed token and sends email when user exists', async () => {
+    it('stores the hashed token and emails the raw one when the user exists', async () => {
       userService.findByEmail.mockResolvedValue(mockUser);
 
-      const result = await service.forgotPassword(mockUser.email);
+      await service.forgotPassword(mockUser.email);
+      await flushDetached();
 
-      expect(result.message).toBe(GENERIC);
       expect(userService.setResetToken).toHaveBeenCalledWith(
         mockUser.id,
         expect.any(String),
@@ -254,28 +281,48 @@ describe('AuthService', () => {
       );
     });
 
-    it('clears the token and still reports success when mail fails', async () => {
+    it('does nothing in the background for an unknown email', async () => {
+      userService.findByEmail.mockResolvedValue(null);
+
+      await service.forgotPassword('unknown@example.com');
+      await flushDetached();
+
+      expect(userService.setResetToken).not.toHaveBeenCalled();
+      expect(mailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+    });
+
+    it('clears the token when the mail fails, without rejecting', async () => {
       userService.findByEmail.mockResolvedValue(mockUser);
       mailService.sendPasswordResetEmail.mockRejectedValue(
         new Error('SES MessageRejected'),
       );
 
-      const result = await service.forgotPassword(mockUser.email);
-
-      expect(result.message).toBe(GENERIC);
+      await expect(service.forgotPassword(mockUser.email)).resolves.toEqual({
+        message: FORGOT_PASSWORD_MESSAGE,
+      });
+      await flushDetached();
       expect(userService.clearResetToken).toHaveBeenCalledWith(mockUser.id);
+    });
+
+    it('swallows a database failure in the detached work', async () => {
+      userService.findByEmail.mockResolvedValue(mockUser);
+      userService.setResetToken.mockRejectedValue(new Error('db down'));
+
+      await service.forgotPassword(mockUser.email);
+      await flushDetached();
+
+      expect(mailService.sendPasswordResetEmail).not.toHaveBeenCalled();
     });
   });
 
   describe('resetPassword', () => {
-    it('updates password when token is valid', async () => {
+    it('consumes the token, sets the bcrypt hash and revokes refresh tokens in one transaction', async () => {
       const rawToken = crypto.randomBytes(32).toString('hex');
       const hashedToken = crypto
         .createHash('sha256')
         .update(rawToken)
         .digest('hex');
-
-      userService.findByResetToken.mockResolvedValue(mockUser);
+      userService.consumeResetToken.mockResolvedValue(mockUser.id);
 
       const result = await service.resetPassword(
         rawToken,
@@ -283,42 +330,34 @@ describe('AuthService', () => {
         'newPassword1',
       );
 
-      expect(result.message).toBe('Password updated successfully.');
-      expect(userService.findByResetToken).toHaveBeenCalledWith(hashedToken);
-      expect(userService.updatePassword).toHaveBeenCalledWith(
-        mockUser.id,
+      expect(result).toEqual({ message: RESET_PASSWORD_MESSAGE });
+      expect(userService.consumeResetToken).toHaveBeenCalledWith(
+        manager,
+        hashedToken,
         expect.any(String),
       );
-
-      const [, hashedPassword] = userService.updatePassword.mock.calls[0];
+      const [, , hashedPassword] = userService.consumeResetToken.mock.calls[0];
       expect(await bcrypt.compare('newPassword1', hashedPassword)).toBe(true);
-    });
-
-    it('signs out every existing session after a reset', async () => {
-      userService.findByResetToken.mockResolvedValue(mockUser);
-
-      await service.resetPassword('raw-token', 'newPassword1', 'newPassword1');
-
       expect(refreshTokenService.revokeAllForUser).toHaveBeenCalledWith(
         mockUser.id,
+        manager,
       );
     });
 
-    it('does not revoke sessions when the token is invalid', async () => {
-      userService.findByResetToken.mockResolvedValue(null);
+    it('rejects an invalid, used or expired token and revokes nothing', async () => {
+      userService.consumeResetToken.mockResolvedValue(null);
 
       await expect(
         service.resetPassword('bad', 'newPassword1', 'newPassword1'),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow('Invalid or expired reset token');
       expect(refreshTokenService.revokeAllForUser).not.toHaveBeenCalled();
     });
 
-    it('throws when token is invalid or expired', async () => {
-      userService.findByResetToken.mockResolvedValue(null);
-
+    it('rejects mismatched passwords before touching the token', async () => {
       await expect(
-        service.resetPassword('invalid-token', 'newPassword1', 'newPassword1'),
+        service.resetPassword('raw', 'newPassword1', 'different1'),
       ).rejects.toThrow(BadRequestException);
+      expect(userService.consumeResetToken).not.toHaveBeenCalled();
     });
   });
 
@@ -494,7 +533,7 @@ describe('AuthService', () => {
       expect(result.user.id).toBe(mockUser.id);
       expect(userService.createSocialUser).not.toHaveBeenCalled();
       // First provider wins: nothing is written back to the existing row.
-      expect(userService.updatePassword).not.toHaveBeenCalled();
+      expect(userService.consumeResetToken).not.toHaveBeenCalled();
     });
 
     it('creates a new account carrying the provider user id', async () => {

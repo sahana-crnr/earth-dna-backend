@@ -12,6 +12,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { VALIDATION_PIPE_OPTIONS } from './common/validation-pipe.options';
 import { validateJwtSecret } from './config/validate-jwt-secret';
 import { parseClientIds } from './config';
 
@@ -43,16 +44,7 @@ async function bootstrap() {
   });
 
   // ─── Validation ────────────────────────────────────────────────────────────
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true, // strip unknown properties
-      forbidNonWhitelisted: true, // throw on unknown properties
-      transform: true, // auto-transform payloads to DTO types
-      transformOptions: {
-        enableImplicitConversion: true,
-      },
-    }),
-  );
+  app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
 
   // ─── Serialization ─────────────────────────────────────────────────────────
   app.useGlobalInterceptors(

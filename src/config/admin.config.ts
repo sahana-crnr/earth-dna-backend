@@ -9,6 +9,7 @@
 // ADMIN_DISABLE=true. Neither refuses to boot (cf. validateJwtSecret) because
 // the admin is optional - the app keeps serving every USER route.
 import { registerAs } from '@nestjs/config';
+import { normalizeEmail } from '../common/transforms/string.transforms';
 
 export const ADMIN_PASSWORD_MIN_LENGTH = 12;
 
@@ -23,7 +24,11 @@ export interface AdminConfig {
 export default registerAs(
   'admin',
   (): AdminConfig => ({
-    email: process.env.ADMIN_EMAIL?.trim() || null,
+    // Same canonical form as every stored email, so ADMIN_EMAIL=Admin@x.com
+    // finds (and refuses) an existing Google account admin@x.com.
+    email: process.env.ADMIN_EMAIL?.trim()
+      ? normalizeEmail(process.env.ADMIN_EMAIL)
+      : null,
     password: process.env.ADMIN_PASSWORD || null,
     disabled: process.env.ADMIN_DISABLE?.trim().toLowerCase() === 'true',
   }),

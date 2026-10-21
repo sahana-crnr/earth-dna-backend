@@ -2,6 +2,7 @@
 //
 // These COMPLEMENT the example-based specs next to each verifier - they never
 // replace them (PBT-10). Shrinking is on and no seed is pinned (PBT-08).
+import { DataSource } from 'typeorm';
 import fc from 'fast-check';
 import { instanceToPlain } from 'class-transformer';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -320,6 +321,8 @@ describe('socialLogin properties', () => {
             verify: jest.fn(() => Promise.resolve(identities.apple)),
           },
         },
+        // Only resetPassword uses it; these properties never reach it.
+        { provide: DataSource, useValue: {} },
       ],
     }).compile();
     module.useLogger(false);

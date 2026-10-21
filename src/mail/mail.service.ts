@@ -10,12 +10,17 @@ export class MailService implements OnModuleInit {
   constructor(private readonly config: ConfigService) {
     this.sesClient = new SESClient({
       region: this.config.get<string>('mail.awsRegion'),
+      // The SDK has no request timeout by default; a hung connection would
+      // otherwise keep the reset send pending forever.
+      requestHandler: { connectionTimeout: 5_000, requestTimeout: 10_000 },
     });
   }
 
   // Logs how mail is configured at boot. The forgot-password endpoint answers
-  // 200 even when sending fails, so this line is the first place to look when
-  // users report that reset emails never arrive.
+  // 200 even when sending fails, so these lines are the first place to look
+  // when users report that reset emails never arrive. It cannot tell whether
+  // SES is in sandbox or the sender is verified (that needs extra IAM
+  // permissions); the per-send error line says so when it happens.
   onModuleInit(): void {
     if (this.parseBooleanConfig('mail.dryRun')) {
       this.logger.warn(
@@ -33,6 +38,26 @@ export class MailService implements OnModuleInit {
     this.logger.log(
       `Reset emails sent through SES from ${fromEmail} in ${this.config.get<string>('mail.awsRegion')}`,
     );
+    // Not awaited: on a machine without credentials the provider chain probes
+    // the instance metadata endpoint, which must not delay boot.
+    void this.checkCredentials();
+  }
+
+  private async checkCredentials(): Promise<void> {
+    try {
+      await this.sesClient.config.credentials();
+      this.logger.log('SES credentials resolved');
+    } catch (error) {
+      this.logger.error(
+        `SES credentials could not be resolved: every reset email will fail (${MailService.describe(error)})`,
+      );
+    }
+  }
+
+  private static describe(error: unknown): string {
+    return error instanceof Error
+      ? `${error.name}: ${error.message}`
+      : String(error);
   }
 
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
@@ -51,6 +76,9 @@ export class MailService implements OnModuleInit {
     }
 
     if (!fromEmail) {
+      this.logger.error(
+        `Password reset email to ${to} not sent: AWS_SES_FROM_EMAIL is not configured`,
+      );
       throw new Error('AWS_SES_FROM_EMAIL is not configured');
     }
 
@@ -81,11 +109,13 @@ export class MailService implements OnModuleInit {
         `Password reset email sent to ${to} (SES MessageId ${result.MessageId})`,
       );
     } catch (error) {
-      const err = error as Error;
-      // MessageRejected "Email address is not verified" means SES is still in
-      // sandbox (recipient not verified) or the sender identity is not verified.
+      // The only log line for a failed send (callers do not log it again).
+      // "MessageRejected: Email address is not verified" = SES sandbox or an
+      // unverified sender; CredentialsProviderError = IAM/keys; timeouts and
+      // ENOTFOUND = network.
       this.logger.error(
-        `SES rejected password reset email to ${to}: ${err.name}: ${err.message}`,
+        `SES send failed for password reset email to ${to}: ${MailService.describe(error)}`,
+        error instanceof Error ? error.stack : undefined,
       );
       throw error;
     }

@@ -5,10 +5,11 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import ms, { type StringValue } from 'ms';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
+import { UserEntity } from '../user/entities/user.entity';
 
 @Injectable()
 export class RefreshTokenService {
@@ -31,15 +32,17 @@ export class RefreshTokenService {
   private async createToken(
     userId: string,
     userAgent?: string,
+    manager: EntityManager = this.refreshTokenRepo.manager,
   ): Promise<{ entity: RefreshTokenEntity; rawToken: string }> {
+    const repo = manager.getRepository(RefreshTokenEntity);
     const rawToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = this.hash(rawToken);
 
     const expiresIn = this.config.get<string>('app.refreshTokenExpiresIn')!;
     const expiresAt = new Date(Date.now() + ms(expiresIn as StringValue));
 
-    const entity = await this.refreshTokenRepo.save(
-      this.refreshTokenRepo.create({
+    const entity = await repo.save(
+      repo.create({
         userId,
         tokenHash,
         expiresAt,
@@ -52,8 +55,15 @@ export class RefreshTokenService {
 
   /**
    * Validates a refresh token and rotates it: the presented token is revoked and
-   * a new one is issued. If an already-revoked token is presented, this is treated
-   * as reuse (possible theft) and ALL of the user's active tokens are revoked.
+   * a new one is issued. Presenting a token that was already ROTATED (it has a
+   * successor) is treated as reuse (possible theft) and revokes ALL of the
+   * user's tokens. A token revoked by logout or a password reset is simply
+   * invalid: an old device waking up after a reset must not sign the user out
+   * of the session they just started.
+   *
+   * Runs in one transaction holding the user row lock, the same lock a
+   * password reset takes, so a refresh racing a reset either finishes first
+   * (and the reset revokes its new token) or sees the token already revoked.
    * Returns the owning userId and the new raw refresh token.
    */
   async rotate(
@@ -63,19 +73,26 @@ export class RefreshTokenService {
     const tokenHash = this.hash(rawToken);
     const record = await this.refreshTokenRepo.findOne({
       where: { tokenHash },
-      select: { id: true, userId: true, expiresAt: true, revokedAt: true },
+      select: {
+        id: true,
+        userId: true,
+        expiresAt: true,
+        revokedAt: true,
+        replacedByTokenId: true,
+      },
     });
 
     if (!record) {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    // Reuse detection: a token that was already rotated/revoked is being presented.
     if (record.revokedAt) {
-      this.logger.warn(
-        `Refresh token reuse detected for user ${record.userId}; revoking all sessions`,
-      );
-      await this.revokeAllForUser(record.userId);
+      if (record.replacedByTokenId) {
+        this.logger.warn(
+          `Refresh token reuse detected for user ${record.userId}; revoking all sessions`,
+        );
+        await this.revokeAllForUser(record.userId);
+      }
       throw new UnauthorizedException('Invalid refresh token');
     }
 
@@ -83,16 +100,39 @@ export class RefreshTokenService {
       throw new UnauthorizedException('Refresh token expired');
     }
 
-    // Issue the replacement first so we can link the rotation chain.
-    const { entity: newRecord, rawToken: newRawToken } = await this.createToken(
-      record.userId,
-      userAgent,
-    );
+    const newRawToken = await this.refreshTokenRepo.manager.transaction(
+      async (m) => {
+        await m
+          .getRepository(UserEntity)
+          .createQueryBuilder('user')
+          .select('user.id')
+          .where('user.id = :id', { id: record.userId })
+          .setLock('pessimistic_write')
+          .getOne();
 
-    await this.refreshTokenRepo.update(record.id, {
-      revokedAt: new Date(),
-      replacedByTokenId: newRecord.id,
-    });
+        // Conditional: loses cleanly to a concurrent rotate, logout or reset.
+        const claimed = await m
+          .createQueryBuilder()
+          .update(RefreshTokenEntity)
+          .set({ revokedAt: () => 'now()' })
+          .where('id = :id', { id: record.id })
+          .andWhere('"revokedAt" IS NULL')
+          .execute();
+        if (!claimed.affected) {
+          throw new UnauthorizedException('Invalid refresh token');
+        }
+
+        const { entity, rawToken: raw } = await this.createToken(
+          record.userId,
+          userAgent,
+          m,
+        );
+        await m
+          .getRepository(RefreshTokenEntity)
+          .update(record.id, { replacedByTokenId: entity.id });
+        return raw;
+      },
+    );
 
     return { userId: record.userId, rawToken: newRawToken };
   }
@@ -109,9 +149,15 @@ export class RefreshTokenService {
       .execute();
   }
 
-  /** Revokes every active refresh token for a user (logout-all / reuse response). */
-  async revokeAllForUser(userId: string): Promise<void> {
-    await this.refreshTokenRepo
+  /**
+   * Revokes every active refresh token for a user (logout-all, reuse response,
+   * password reset). Pass `manager` to run inside the caller's transaction.
+   */
+  async revokeAllForUser(
+    userId: string,
+    manager: EntityManager = this.refreshTokenRepo.manager,
+  ): Promise<void> {
+    await manager
       .createQueryBuilder()
       .update(RefreshTokenEntity)
       .set({ revokedAt: new Date() })

@@ -24,7 +24,7 @@
 // the app serving USER routes.
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DataSource, Not, Repository } from 'typeorm';
+import { DataSource, Not, Raw, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { UserEntity } from '../user/entities/user.entity';
 import {
@@ -103,7 +103,9 @@ export class AdminBootstrapService implements OnApplicationBootstrap {
       if (!email || !password) return { outcome: 'skipped', adminId: null };
 
       const existing = await repo.findOne({
-        where: { email },
+        where: {
+          email: Raw((col) => `LOWER(${col}) = LOWER(:email)`, { email }),
+        },
         select: { id: true, role: true, authProvider: true, password: true },
       });
 

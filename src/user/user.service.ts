@@ -2,9 +2,10 @@
 // finding by email, finding by id, finding with password for auth, and creating records.
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThan, Raw, Repository } from 'typeorm';
+import { EntityManager, Raw, Repository } from 'typeorm';
 import { UserEntity, SocialProvider } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
+import { normalizeEmail } from '../common/transforms/string.transforms';
 
 @Injectable()
 export class UserService {
@@ -19,9 +20,10 @@ export class UserService {
     return user;
   }
 
-  // Case-insensitive: accounts registered before emails were normalised may
-  // be stored mixed-case. LOWER() rather than ILIKE, since ILIKE treats the
-  // "_" common in emails as a wildcard.
+  // Case-insensitive, served by the UQ_users_email_lower index. Stored emails
+  // are already normalised (migration NormalizeUserEmails + create()); this
+  // keeps a raw caller argument working too. LOWER() rather than ILIKE, since
+  // ILIKE treats the "_" common in emails as a wildcard.
   findByEmail(email: string): Promise<UserEntity | null> {
     return this.userRepo.findOne({
       where: {
@@ -40,8 +42,14 @@ export class UserService {
       .getOne();
   }
 
+  // create() and createSocialUser() are the only places a user row is born
+  // (the admin bootstrap reads ADMIN_EMAIL already normalised), so every
+  // stored email is in canonical form whatever the caller passed.
   create(dto: CreateUserDto): Promise<UserEntity> {
-    const user = this.userRepo.create(dto);
+    const user = this.userRepo.create({
+      ...dto,
+      email: normalizeEmail(dto.email),
+    });
     return this.userRepo.save(user);
   }
 
@@ -95,7 +103,7 @@ export class UserService {
     fullName: string;
   }): Promise<UserEntity> {
     const user = this.userRepo.create({
-      email: params.email,
+      email: normalizeEmail(params.email),
       fullName: params.fullName,
       password: null,
       country: null,
@@ -156,20 +164,42 @@ export class UserService {
       .then(() => undefined);
   }
 
-  findByResetToken(hashedToken: string): Promise<UserEntity | null> {
-    return this.userRepo.findOne({
-      where: {
-        resetPasswordToken: hashedToken,
-        resetPasswordExpiry: MoreThan(new Date()),
-      },
-    });
+  /**
+   * Consumes a reset token and sets the new password in ONE conditional
+   * UPDATE, so a token can be used exactly once even under concurrent POSTs.
+   * Also stamps passwordChangedAt (JwtAuthGuard rejects older access tokens).
+   * The UPDATE row-locks the user until `manager`'s transaction ends, which is
+   * what RefreshTokenService.rotate() waits on. Returns the user id, or null
+   * when the token is unknown, already used or expired.
+   */
+  async consumeResetToken(
+    manager: EntityManager,
+    hashedToken: string,
+    hashedPassword: string,
+  ): Promise<string | null> {
+    const result = await manager
+      .createQueryBuilder()
+      .update(UserEntity)
+      .set({
+        password: hashedPassword,
+        resetPasswordToken: null,
+        resetPasswordExpiry: null,
+        passwordChangedAt: () => 'now()',
+      })
+      .where('"resetPasswordToken" = :hashedToken', { hashedToken })
+      .andWhere('"resetPasswordExpiry" > now()')
+      .returning(['id'])
+      .execute();
+    const rows = result.raw as { id: string }[];
+    return rows[0]?.id ?? null;
   }
 
-  async updatePassword(userId: string, hashedPassword: string): Promise<void> {
-    await this.userRepo.update(userId, {
-      password: hashedPassword,
-      resetPasswordToken: null,
-      resetPasswordExpiry: null,
+  /** null = password never reset (or no such user). */
+  async getPasswordChangedAt(userId: string): Promise<Date | null> {
+    const row = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { id: true, passwordChangedAt: true },
     });
+    return row?.passwordChangedAt ?? null;
   }
 }

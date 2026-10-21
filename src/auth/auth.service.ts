@@ -12,6 +12,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { DataSource } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -34,6 +35,11 @@ import type { AdminConfig } from '../config/admin.config';
 
 export const BCRYPT_SALT_ROUNDS = 10;
 
+export const FORGOT_PASSWORD_MESSAGE =
+  'If an account with that email exists, a password reset link has been sent.';
+export const RESET_PASSWORD_MESSAGE =
+  'Your password has been reset successfully. You may now log in with your new password.';
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -47,6 +53,7 @@ export class AuthService {
     private readonly googleVerifier: GoogleTokenVerifier,
     private readonly facebookVerifier: FacebookTokenVerifier,
     private readonly appleVerifier: AppleTokenVerifier,
+    private readonly dataSource: DataSource,
   ) {}
 
   // `role` (F7) is for the client only - RolesGuard re-reads it from the DB, so
@@ -287,49 +294,62 @@ export class AuthService {
     return this.userService.findById(userId);
   }
 
+  /**
+   * Same answer, after the same single lookup, whether or not the account
+   * exists (T11): the token write and the SES call run after the response is
+   * sent, so neither the body nor the response time reveals a registered email.
+   */
   async forgotPassword(email: string): Promise<{ message: string }> {
-    // Same answer whether or not the account exists, so this endpoint cannot be
-    // used to discover which emails are registered (T11).
-    const message =
-      'If an account with that email exists, a password reset link has been sent.';
-
     const user = await this.userService.findByEmail(email);
-    if (!user) {
+    if (user) {
+      void this.sendResetLink(user);
+    } else {
       this.logger.log('Password reset requested for an unregistered email');
-      return { message };
     }
-
-    const rawToken = crypto.randomBytes(32).toString('hex');
-    const hashedToken = crypto
-      .createHash('sha256')
-      .update(rawToken)
-      .digest('hex');
-
-    const expiryMinutes = this.config.get<number>(
-      'mail.resetTokenExpiryMinutes',
-    )!;
-    const expiry = new Date(Date.now() + expiryMinutes * 60 * 1000);
-
-    await this.userService.setResetToken(user.id, hashedToken, expiry);
-
-    const backendUrl = this.config.get<string>('mail.backendUrl');
-    const apiPrefix = this.config.get<string>('app.apiPrefix');
-    const resetUrl = `${backendUrl}/${apiPrefix}/auth/reset-password?token=${rawToken}`;
-
-    try {
-      await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
-    } catch (err) {
-      await this.userService.clearResetToken(user.id);
-      this.logger.error(
-        `Failed to send password reset email to ${user.email}`,
-        err instanceof Error ? err.stack : String(err),
-      );
-      // Same response as success to avoid leaking whether the account exists or mail failed.
-    }
-
-    return { message };
+    return { message: FORGOT_PASSWORD_MESSAGE };
   }
 
+  // Never rejects: it runs detached from the request, so every failure is
+  // logged here (or by MailService) instead of surfacing as an unhandled rejection.
+  private async sendResetLink(user: UserEntity): Promise<void> {
+    try {
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const hashedToken = crypto
+        .createHash('sha256')
+        .update(rawToken)
+        .digest('hex');
+
+      const expiryMinutes = this.config.get<number>(
+        'mail.resetTokenExpiryMinutes',
+      )!;
+      const expiry = new Date(Date.now() + expiryMinutes * 60 * 1000);
+
+      await this.userService.setResetToken(user.id, hashedToken, expiry);
+
+      const backendUrl = this.config.get<string>('mail.backendUrl');
+      const apiPrefix = this.config.get<string>('app.apiPrefix');
+      const resetUrl = `${backendUrl}/${apiPrefix}/auth/reset-password?token=${rawToken}`;
+
+      try {
+        await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
+      } catch {
+        // MailService has already logged the SES error; just drop the token
+        // nobody received.
+        await this.userService.clearResetToken(user.id);
+      }
+    } catch (err) {
+      this.logger.error(
+        `Could not issue a password reset for user ${user.id}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+  }
+
+  /**
+   * Consumes the token, sets the password and revokes every refresh token in
+   * one transaction. Access tokens issued before the reset are rejected by
+   * JwtAuthGuard via users.passwordChangedAt, so this signs out every device.
+   */
   async resetPassword(
     token: string,
     newPassword: string,
@@ -340,18 +360,22 @@ export class AuthService {
     }
 
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    // Hashed before the transaction so the user row lock is held only briefly.
+    const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
 
-    const user = await this.userService.findByResetToken(hashedToken);
-    if (!user) {
+    const userId = await this.dataSource.transaction(async (m) => {
+      const id = await this.userService.consumeResetToken(
+        m,
+        hashedToken,
+        hashedPassword,
+      );
+      if (id) await this.refreshTokenService.revokeAllForUser(id, m);
+      return id;
+    });
+
+    if (!userId) {
       throw new BadRequestException('Invalid or expired reset token');
     }
-
-    const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
-    await this.userService.updatePassword(user.id, hashedPassword);
-    // Sign out every existing session: whoever knew the old password must not
-    // keep access through a refresh token issued before the reset.
-    await this.refreshTokenService.revokeAllForUser(user.id);
-
-    return { message: 'Password updated successfully.' };
+    return { message: RESET_PASSWORD_MESSAGE };
   }
 }
