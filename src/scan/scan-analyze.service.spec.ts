@@ -1,5 +1,6 @@
 // Unit tests for ScanAnalyzeService with every collaborator mocked: the
-// pre-check gates (404 / 409 / 503), the error mapping of a failed model call
+// pre-check gates (404 / 409 / 503), the fallback-only rule (also re-checked
+// under the lock), the error mapping of a failed model call
 // (502 / 504, nothing written), and that a success goes through the shared
 // E10 write path with source 'server'. The real write path against Postgres is
 // covered in scan-result.service.it.spec.ts.
@@ -40,6 +41,7 @@ describe('ScanAnalyzeService', () => {
   const identify = jest.fn();
   const signedGetUrl = jest.fn();
   const writeResult = jest.fn();
+  let manager: Record<string, unknown>;
   let service: ScanAnalyzeService;
 
   beforeEach(() => {
@@ -65,7 +67,7 @@ describe('ScanAnalyzeService', () => {
       where: () => qb,
       getOne: () => Promise.resolve(scan),
     };
-    const manager = {
+    manager = {
       getRepository: () => ({ createQueryBuilder: () => qb }),
       findOne: (entity: unknown, opts: { where: { id: string } }) =>
         Promise.resolve(
@@ -79,7 +81,7 @@ describe('ScanAnalyzeService', () => {
         _u: string,
         _s: string,
         work: (m: unknown, s: unknown) => Promise<unknown>,
-      ) => work('tx', scan),
+      ) => work(manager, scan),
       writeResult,
     } as unknown as ScanResultService;
     const storage = {
@@ -143,7 +145,7 @@ describe('ScanAnalyzeService', () => {
       string,
       unknown,
     ];
-    expect(tx).toBe('tx');
+    expect(tx).toBe(manager);
     expect(lockedScan).toBe(scan);
     expect(shoeId).toBe(SHOE);
     expect(fields).toMatchObject({
@@ -183,6 +185,30 @@ describe('ScanAnalyzeService', () => {
       expect(identify).not.toHaveBeenCalled();
     },
   );
+
+  it('409 ALREADY_IDENTIFIED on an identified shoe, before any model call', async () => {
+    shoe!.status = 'identified';
+    expect(await codeOf(run())).toEqual([409, 'ALREADY_IDENTIFIED']);
+    expect(identify).not.toHaveBeenCalled();
+    expect(writeResult).not.toHaveBeenCalled();
+  });
+
+  it('runs on a shoe whose earlier result failed', async () => {
+    shoe!.status = 'failed';
+    await expect(run()).resolves.toBe(VIEW);
+    expect(writeResult).toHaveBeenCalledTimes(1);
+  });
+
+  it('409 ALREADY_IDENTIFIED when the device identifies the shoe while ShoeDNA runs', async () => {
+    identify.mockImplementation(() => {
+      // A device E10 submit commits between the pre-check and the write.
+      shoe!.status = 'identified';
+      return Promise.resolve({ brand: 'Nike', confidence: 0.8 });
+    });
+    expect(await codeOf(run())).toEqual([409, 'ALREADY_IDENTIFIED']);
+    expect(identify).toHaveBeenCalledTimes(1);
+    expect(writeResult).not.toHaveBeenCalled();
+  });
 
   it('409 NO_PHOTOS when the shoe has nothing stored', async () => {
     photos = [];

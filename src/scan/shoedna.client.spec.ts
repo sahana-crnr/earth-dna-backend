@@ -1,6 +1,7 @@
 // Transport tests for ShoeDnaClient with a mocked global fetch: the request it
-// builds (path, auth, version header) and how each failure maps to the two
-// error types the service turns into 502 / 504.
+// builds (path, auth, version header, no redirects), the response size cap,
+// and how each failure maps to the two error types the service turns into
+// 502 / 504.
 import { ConfigService } from '@nestjs/config';
 import type { ActiveIntegration } from '../integrations/integration.view';
 import {
@@ -10,6 +11,7 @@ import {
 import {
   InferenceFailedError,
   InferenceTimeoutError,
+  MAX_RESPONSE_BYTES,
   ShoeDnaClient,
 } from './shoedna.client';
 
@@ -55,6 +57,7 @@ describe('ShoeDnaClient', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://shoedna.example.com/v2/identify');
     expect(init.method).toBe('POST');
+    expect(init.redirect).toBe('error');
     expect(init.headers).toMatchObject({
       Authorization: 'Bearer sk-secret',
       'X-Model-Version': 'v2.1',
@@ -91,6 +94,35 @@ describe('ShoeDnaClient', () => {
     await expect(client.identify(ACTIVE, REQUEST)).rejects.toBeInstanceOf(
       InferenceFailedError,
     );
+  });
+
+  it('a body over the cap by content-length is InferenceFailedError', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-length': String(MAX_RESPONSE_BYTES + 1) },
+      }),
+    );
+    await expect(client.identify(ACTIVE, REQUEST)).rejects.toThrow(
+      'response too large',
+    );
+  });
+
+  it('a streamed body over the cap (no content-length) is InferenceFailedError', async () => {
+    const chunk = new Uint8Array(64 * 1024).fill(0x20);
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        // Never-ending stream: the cap, not EOF, must stop the read.
+        sent += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    });
+    fetchMock.mockResolvedValue(new Response(stream, { status: 200 }));
+    await expect(client.identify(ACTIVE, REQUEST)).rejects.toThrow(
+      'response too large',
+    );
+    expect(sent).toBeLessThanOrEqual(MAX_RESPONSE_BYTES + 2 * chunk.byteLength);
   });
 
   it('an aborted (timed-out) call is InferenceTimeoutError', async () => {

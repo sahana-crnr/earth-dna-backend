@@ -1,7 +1,21 @@
-// Secrets Manager implementation of SecretResolver. On dev/prod the SDK uses
-// the ECS task role, which needs secretsmanager:GetSecretValue on the
-// earthdna/be/* names an admin can set as authRef (F7 restricts authRef to
-// earthdna/… so the role grant can stay that narrow).
+// Secrets Manager implementation of SecretResolver. The SDK signs with the
+// first credentials its default chain finds, and env keys come before the ECS
+// task role: on dev2 the task definition injects AWS_ACCESS_KEY_ID /
+// AWS_SECRET_ACCESS_KEY (IAM user earth-dna-be-ses-ue1-dev2), so THAT user —
+// not the task role — needs secretsmanager:GetSecretValue on the secret.
+// A grant on the task role alone is silently unused and every call becomes
+// 503 INFERENCE_CREDENTIAL_UNAVAILABLE (the same trap S3 hit in F1).
+//
+// The grant is per secret, not earthdna/be/*: the same prefix holds the JWT
+// and admin credentials, which leaked static keys must not reach. dev2 grants
+// only earthdna/be/shoedna-api-key-ue1-dev2-* (inline policy
+// shoedna-secret-read-ue1-dev2; the -* covers the suffix AWS appends). A new
+// consumer (ValueLens) gets its own secret and its own grant.
+//
+// The SDK has no request timeout by default, and the lookup runs before the
+// inference timeout starts, so the client gets explicit connection / request
+// timeouts: a hung Secrets Manager call fails fast as a 503 instead of holding
+// the request until the load balancer cuts it.
 //
 // Two accepted secret shapes: a plain string (the key itself), or JSON with an
 // `apiKey` field — the console's "key/value" mode writes the latter, and
@@ -20,6 +34,8 @@ import type { StorageConfig } from '../config/storage.config';
 import { SecretResolver, SecretUnavailableError } from './secret-resolver';
 
 const CACHE_MS = 5 * 60 * 1000;
+const CONNECTION_TIMEOUT_MS = 3_000;
+const REQUEST_TIMEOUT_MS = 5_000;
 
 @Injectable()
 export class AwsSecretResolver extends SecretResolver {
@@ -31,7 +47,13 @@ export class AwsSecretResolver extends SecretResolver {
     super();
     // AWS_REGION is already read by the storage namespace; one region per task.
     const region = config.get<StorageConfig>('storage')?.region ?? 'us-east-1';
-    this.client = new SecretsManagerClient({ region });
+    this.client = new SecretsManagerClient({
+      region,
+      requestHandler: {
+        connectionTimeout: CONNECTION_TIMEOUT_MS,
+        requestTimeout: REQUEST_TIMEOUT_MS,
+      },
+    });
   }
 
   async resolve(name: string): Promise<string> {

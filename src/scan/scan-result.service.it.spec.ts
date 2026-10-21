@@ -582,6 +582,23 @@ d('ScanResultService (integration, real Postgres)', () => {
       expect(await rowsFor(shoeIds[1])).toBe(1);
     });
 
+    it('refuses a shoe the device already identified and leaves its row alone', async () => {
+      const userId = await newUser();
+      const { scanId, shoeIds } = await finishedScan(userId);
+      const device = await results.submit(userId, scanId, shoeIds[0], RESULT);
+
+      expect(await code(analyzer.analyze(userId, scanId, shoeIds[0]))).toBe(
+        'ALREADY_IDENTIFIED',
+      );
+      expect(identify).not.toHaveBeenCalled();
+      const row = await ds
+        .getRepository(ScanShoeResultEntity)
+        .findOneByOrFail({ scanShoeId: shoeIds[0] });
+      expect(row.source).toBe('device');
+      expect(row.submittedAt.toISOString()).toBe(device.result.submittedAt);
+      expect(await shoeStatus(shoeIds[0])).toBe('identified');
+    });
+
     it('the last shoe resolved by analyze flips the scan to review', async () => {
       const userId = await newUser();
       const { scanId, shoeIds } = await finishedScan(userId, 2);

@@ -6,6 +6,11 @@
 // contract in shoedna-rules.ts. Every failure surfaces as one of two errors
 // so the service can answer 504 vs 502 without knowing about fetch.
 //
+// Two guards against a misbehaving or misconfigured endpoint: redirects are
+// refused (a 307/308 would re-POST the signed photo URLs to wherever it
+// points), and the body is read with a byte cap — we keep at most a few KB of
+// it as `raw`, so a huge answer is a failure, not something to buffer.
+//
 // Logging: never the credential and never the signed photo URLs (they grant
 // read access to the user's photos until they expire).
 import { Injectable, Logger } from '@nestjs/common';
@@ -16,6 +21,8 @@ import { SecretResolver } from '../integrations/secret-resolver';
 import type { ShoeDnaRequest } from './shoedna-rules';
 
 export const SHOEDNA_IDENTIFY_PATH = '/identify';
+/** Far above any real answer (raw is capped at a few KB), far below a risk. */
+export const MAX_RESPONSE_BYTES = 256 * 1024;
 
 /** The call did not answer within SCAN_INFERENCE_TIMEOUT_MS. */
 export class InferenceTimeoutError extends Error {
@@ -72,6 +79,7 @@ export class ShoeDnaClient {
         method: 'POST',
         headers,
         body: JSON.stringify(request),
+        redirect: 'error',
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
@@ -93,18 +101,58 @@ export class ShoeDnaClient {
       );
       throw new InferenceFailedError(`status ${res.status}`);
     }
+    let text: string;
     try {
-      const body: unknown = await res.json();
+      text = await readCapped(res, MAX_RESPONSE_BYTES);
+    } catch (err) {
+      // The timeout also covers reading the body.
+      if (isTimeout(err)) throw new InferenceTimeoutError(this.timeoutMs);
+      if (err instanceof ResponseTooLargeError) {
+        this.logger.error(
+          `shoe ${request.shoeId}: ShoeDNA answer over ${MAX_RESPONSE_BYTES} bytes`,
+        );
+        throw new InferenceFailedError('response too large');
+      }
+      throw new InferenceFailedError('response could not be read');
+    }
+    try {
+      const body: unknown = JSON.parse(text);
       this.logger.log(
         `shoe ${request.shoeId}: ShoeDNA answered in ${Date.now() - started} ms`,
       );
       return body;
-    } catch (err) {
-      // The timeout also covers reading the body.
-      if (isTimeout(err)) throw new InferenceTimeoutError(this.timeoutMs);
+    } catch {
       throw new InferenceFailedError('response is not JSON');
     }
   }
+}
+
+class ResponseTooLargeError extends Error {}
+
+/** The body as text, failing as soon as it passes `max` bytes: an honest
+ *  content-length is rejected up front, a missing or lying one mid-stream. */
+async function readCapped(res: Response, max: number): Promise<string> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new ResponseTooLargeError();
+  }
+  if (!res.body) return '';
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => undefined);
+      throw new ResponseTooLargeError();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 function isTimeout(err: unknown): boolean {

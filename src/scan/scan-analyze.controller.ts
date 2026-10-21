@@ -45,7 +45,7 @@ export class ScanAnalyzeController {
     summary:
       'E10b — run ShoeDNA server-side on the stored photos (on-device fallback)',
     description:
-      'For when the on-device model fails. Runs ShoeDNA on the photos already uploaded for this shoe, stores the result with source "server", and returns exactly the E10 response. Synchronous; a failed or timed-out call stores nothing, so it is safe to retry.',
+      'For when the on-device model fails: only for a shoe with no result yet or a failed one. Runs ShoeDNA on the photos already uploaded for this shoe, stores the result with source "server", and returns exactly the E10 response. Synchronous; a failed or timed-out call stores nothing, so it is safe to retry.',
   })
   @ApiResponse({
     status: 201,
@@ -64,7 +64,7 @@ export class ScanAnalyzeController {
   @ApiResponse({
     status: 409,
     description:
-      'NOT_PROCESSING (call /finish first) / RESULT_LOCKED (shoe already confirmed or rejected) / NO_PHOTOS',
+      'NOT_PROCESSING (call /finish first) / RESULT_LOCKED (shoe already confirmed or rejected) / ALREADY_IDENTIFIED (shoe already has an identified result; analyze is only the fallback) / NO_PHOTOS',
   })
   @ApiResponse({
     status: 502,

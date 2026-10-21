@@ -5,13 +5,19 @@
 // Three phases, because the CLAUDE.md storage rule applies to any slow
 // external call: never hold a DB connection or row lock across it.
 //   1. pre-check, no lock: ownership (404), scan finished (409 NOT_PROCESSING),
-//      shoe still open (409 RESULT_LOCKED), photos present, storage + ShoeDNA
-//      configured — so a request that cannot succeed never reaches the model;
+//      shoe still open (409 RESULT_LOCKED), not already identified (409
+//      ALREADY_IDENTIFIED), photos present, storage + ShoeDNA configured — so
+//      a request that cannot succeed never reaches the model;
 //   2. sign the photo URLs and call ShoeDNA, outside any transaction;
 //   3. ScanResultService.inScanTx + writeResult — the E10 write path, so the
 //      scan/shoe state is re-checked under the lock (it may have moved while
 //      the model ran) and the response is the E10 SubmitResultView by
 //      construction.
+//
+// Fallback only: analyze runs on a shoe with no result yet or a 'failed' one,
+// never over an 'identified' one — a retry or double tap must not replace a
+// good device answer (or downgrade it to failed). The check is here, not in
+// writeResult, because E10 itself may still replace any open result.
 //
 // A failed or timed-out model call writes nothing: the shoe stays as it was,
 // so the app can retry analyze or record `outcome: 'failed'` through E10.
@@ -71,6 +77,7 @@ export class ScanAnalyzeService {
     });
     if (!shoe) throw notFound('SHOE_NOT_FOUND', 'Shoe not found');
     assertResultOpen(shoe);
+    assertNeedsAnalysis(shoe);
 
     const photos = await m.find(ScanPhotoEntity, {
       where: { scanShoeId: shoe.id },
@@ -124,9 +131,14 @@ export class ScanAnalyzeService {
     }
 
     // ── 3. write under the scan lock (E10 path) ──────────────────────────────
-    return this.results.inScanTx(userId, scanId, (tx, locked) =>
-      this.results.writeResult(tx, locked, shoeId, mapped.fields),
-    );
+    return this.results.inScanTx(userId, scanId, async (tx, locked) => {
+      // The device may have submitted a result while ShoeDNA ran.
+      const current = await tx.findOne(ScanShoeEntity, {
+        where: { id: shoeId, scanId: locked.id },
+      });
+      if (current) assertNeedsAnalysis(current);
+      return this.results.writeResult(tx, locked, shoeId, mapped.fields);
+    });
   }
 
   /** Every stored view, in canonical view order. A signing failure is a 502:
@@ -155,6 +167,16 @@ export class ScanAnalyzeService {
       );
     }
   }
+}
+
+/** 409 ALREADY_IDENTIFIED: analyze is the fallback, not a second opinion. */
+function assertNeedsAnalysis(shoe: ScanShoeEntity): void {
+  if (shoe.status !== 'identified') return;
+  throw new ApiError(
+    HttpStatus.CONFLICT,
+    'ALREADY_IDENTIFIED',
+    'Shoe already has an identified result; analyze is only for a missing or failed one',
+  );
 }
 
 function toApiError(err: unknown): unknown {
