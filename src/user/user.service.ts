@@ -2,7 +2,7 @@
 // finding by email, finding by id, finding with password for auth, and creating records.
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThan, Repository } from 'typeorm';
+import { MoreThan, Raw, Repository } from 'typeorm';
 import { UserEntity, SocialProvider } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
 
@@ -19,8 +19,15 @@ export class UserService {
     return user;
   }
 
+  // Case-insensitive: accounts registered before emails were normalised may
+  // be stored mixed-case. LOWER() rather than ILIKE, since ILIKE treats the
+  // "_" common in emails as a wildcard.
   findByEmail(email: string): Promise<UserEntity | null> {
-    return this.userRepo.findOne({ where: { email } });
+    return this.userRepo.findOne({
+      where: {
+        email: Raw((column) => `LOWER(${column}) = LOWER(:email)`, { email }),
+      },
+    });
   }
 
   // Explicitly selects the password column (select: false by default).
@@ -29,7 +36,7 @@ export class UserService {
     return this.userRepo
       .createQueryBuilder('user')
       .addSelect('user.password')
-      .where('user.email = :email', { email })
+      .where('LOWER(user.email) = LOWER(:email)', { email })
       .getOne();
   }
 

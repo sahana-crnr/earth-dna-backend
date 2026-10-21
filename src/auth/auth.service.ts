@@ -288,13 +288,16 @@ export class AuthService {
   }
 
   async forgotPassword(email: string): Promise<{ message: string }> {
+    // Same answer whether or not the account exists, so this endpoint cannot be
+    // used to discover which emails are registered (T11).
+    const message =
+      'If an account with that email exists, a password reset link has been sent.';
+
     const user = await this.userService.findByEmail(email);
-
     if (!user) {
-      throw new BadRequestException('Email not found');
+      this.logger.log('Password reset requested for an unregistered email');
+      return { message };
     }
-
-    const message = 'Password reset link has been sent to your email.';
 
     const rawToken = crypto.randomBytes(32).toString('hex');
     const hashedToken = crypto
@@ -345,6 +348,9 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
     await this.userService.updatePassword(user.id, hashedPassword);
+    // Sign out every existing session: whoever knew the old password must not
+    // keep access through a refresh token issued before the reset.
+    await this.refreshTokenService.revokeAllForUser(user.id);
 
     return { message: 'Password updated successfully.' };
   }

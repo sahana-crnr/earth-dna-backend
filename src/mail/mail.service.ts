@@ -1,9 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 
 @Injectable()
-export class MailService {
+export class MailService implements OnModuleInit {
   private readonly logger = new Logger(MailService.name);
   private sesClient: SESClient;
 
@@ -11,6 +11,28 @@ export class MailService {
     this.sesClient = new SESClient({
       region: this.config.get<string>('mail.awsRegion'),
     });
+  }
+
+  // Logs how mail is configured at boot. The forgot-password endpoint answers
+  // 200 even when sending fails, so this line is the first place to look when
+  // users report that reset emails never arrive.
+  onModuleInit(): void {
+    if (this.parseBooleanConfig('mail.dryRun')) {
+      this.logger.warn(
+        'MAIL_DRY_RUN is on: reset emails are only logged, never sent',
+      );
+      return;
+    }
+    const fromEmail = this.config.get<string>('mail.fromEmail');
+    if (!fromEmail) {
+      this.logger.error(
+        'AWS_SES_FROM_EMAIL is not set: every reset email will fail',
+      );
+      return;
+    }
+    this.logger.log(
+      `Reset emails sent through SES from ${fromEmail} in ${this.config.get<string>('mail.awsRegion')}`,
+    );
   }
 
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
@@ -33,7 +55,7 @@ export class MailService {
     }
 
     try {
-      await this.sesClient.send(
+      const result = await this.sesClient.send(
         new SendEmailCommand({
           Source: `${fromName} <${fromEmail}>`,
           Destination: { ToAddresses: [to] },
@@ -55,11 +77,15 @@ export class MailService {
           },
         }),
       );
-      this.logger.log(`Password reset email sent to ${to}`);
+      this.logger.log(
+        `Password reset email sent to ${to} (SES MessageId ${result.MessageId})`,
+      );
     } catch (error) {
+      const err = error as Error;
+      // MessageRejected "Email address is not verified" means SES is still in
+      // sandbox (recipient not verified) or the sender identity is not verified.
       this.logger.error(
-        `Failed to send password reset email to ${to}`,
-        error as Error,
+        `SES rejected password reset email to ${to}: ${err.name}: ${err.message}`,
       );
       throw error;
     }

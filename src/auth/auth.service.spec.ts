@@ -208,26 +208,22 @@ describe('AuthService', () => {
   });
 
   describe('forgotPassword', () => {
-    // NOTE: this test documents CURRENT behaviour, which changed on develop in
-    // commit 247e70b. It is NOT an endorsement of it.
-    //
-    // forgotPassword now throws BadRequestException('Email not found') for an
-    // unknown address, while a known address returns 200. That difference lets
-    // anyone enumerate which emails have accounts. The original code returned an
-    // identical message either way, with the comment "Always return the same
-    // message to prevent user enumeration" - and auth.controller.ts:309 still
-    // claims that guarantee, which is no longer true.
-    //
-    // Tracked as T11. Change this test if the behaviour is reverted.
-    it('throws for an unknown email (see T11 - enumeration risk)', async () => {
+    const GENERIC =
+      'If an account with that email exists, a password reset link has been sent.';
+
+    // T11: an unknown email must answer exactly like a known one, otherwise the
+    // endpoint tells anyone which addresses have accounts.
+    it('answers an unknown email exactly like a known one (T11)', async () => {
       userService.findByEmail.mockResolvedValue(null);
+      const unknown = await service.forgotPassword('unknown@example.com');
 
-      await expect(
-        service.forgotPassword('unknown@example.com'),
-      ).rejects.toThrow('Email not found');
+      userService.findByEmail.mockResolvedValue(mockUser);
+      const known = await service.forgotPassword(mockUser.email);
 
-      expect(userService.setResetToken).not.toHaveBeenCalled();
-      expect(mailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+      expect(unknown).toEqual({ message: GENERIC });
+      expect(known).toEqual(unknown);
+      expect(userService.setResetToken).toHaveBeenCalledTimes(1);
+      expect(mailService.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
     });
 
     it('stores hashed token and sends email when user exists', async () => {
@@ -235,7 +231,7 @@ describe('AuthService', () => {
 
       const result = await service.forgotPassword(mockUser.email);
 
-      expect(result.message).toContain('Password reset link has been sent');
+      expect(result.message).toBe(GENERIC);
       expect(userService.setResetToken).toHaveBeenCalledWith(
         mockUser.id,
         expect.any(String),
@@ -266,7 +262,7 @@ describe('AuthService', () => {
 
       const result = await service.forgotPassword(mockUser.email);
 
-      expect(result.message).toContain('Password reset link has been sent');
+      expect(result.message).toBe(GENERIC);
       expect(userService.clearResetToken).toHaveBeenCalledWith(mockUser.id);
     });
   });
@@ -296,6 +292,25 @@ describe('AuthService', () => {
 
       const [, hashedPassword] = userService.updatePassword.mock.calls[0];
       expect(await bcrypt.compare('newPassword1', hashedPassword)).toBe(true);
+    });
+
+    it('signs out every existing session after a reset', async () => {
+      userService.findByResetToken.mockResolvedValue(mockUser);
+
+      await service.resetPassword('raw-token', 'newPassword1', 'newPassword1');
+
+      expect(refreshTokenService.revokeAllForUser).toHaveBeenCalledWith(
+        mockUser.id,
+      );
+    });
+
+    it('does not revoke sessions when the token is invalid', async () => {
+      userService.findByResetToken.mockResolvedValue(null);
+
+      await expect(
+        service.resetPassword('bad', 'newPassword1', 'newPassword1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(refreshTokenService.revokeAllForUser).not.toHaveBeenCalled();
     });
 
     it('throws when token is invalid or expired', async () => {
