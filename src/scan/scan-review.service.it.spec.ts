@@ -78,6 +78,7 @@ const CFG: ScanConfig = {
   photoUrlTtlSeconds: 60,
   resultMaxCandidates: 3,
   resultRawMaxBytes: 8192,
+  inferenceTimeoutMs: 25000,
   valuePlaceholder: true,
   thumbnailView: 'right',
 };

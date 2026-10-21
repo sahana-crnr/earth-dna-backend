@@ -28,6 +28,8 @@ export interface ScanConfig {
   resultMaxCandidates: number;
   /** Max serialized bytes of the `raw` ShoeDNA passthrough blob (F2). */
   resultRawMaxBytes: number;
+  /** Abort a server-side ShoeDNA call (analyze, the on-device fallback) after this. */
+  inferenceTimeoutMs: number;
   /** F3: fill value / recommendation on a new My Shoes entry with the
    *  Figma placeholder set until the ValueLens + CircularSort endpoints exist. */
   valuePlaceholder: boolean;
@@ -60,6 +62,10 @@ export default registerAs(
     resultRawMaxBytes: parsePositiveInt(
       process.env.SCAN_RESULT_RAW_MAX_BYTES,
       8192,
+    ),
+    inferenceTimeoutMs: parsePositiveInt(
+      process.env.SCAN_INFERENCE_TIMEOUT_MS,
+      25000,
     ),
     valuePlaceholder: parseBool(process.env.SHOE_VALUE_PLACEHOLDER, true),
     thumbnailView: parseView(process.env.SHOE_THUMBNAIL_VIEW, 'right'),

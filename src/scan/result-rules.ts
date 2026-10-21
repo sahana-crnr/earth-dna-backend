@@ -84,7 +84,10 @@ export type CandidateDecision =
   | { ok: false; error: CandidateRejection; detail: string };
 
 /** brand+model identity, case- and whitespace-insensitive. */
-function candidateKey(c: { brand: string; model?: string | null }): string {
+export function candidateKey(c: {
+  brand: string;
+  model?: string | null;
+}): string {
   return JSON.stringify([
     c.brand.trim().toLowerCase(),
     (c.model ?? '').trim().toLowerCase(),

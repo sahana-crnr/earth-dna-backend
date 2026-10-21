@@ -40,6 +40,49 @@ const SUBMITTABLE: readonly ScanStatus[] = ['processing', 'review'];
 /** Shoe states F3 has already closed; their result must not change (F2-D1). */
 const LOCKED_SHOE_STATUSES = ['confirmed', 'rejected'] as const;
 
+/** Every stored result column a writer chooses; submittedAt is stamped here. */
+export type ResultFields = Pick<
+  ScanShoeResultEntity,
+  | 'source'
+  | 'outcome'
+  | 'modelVersion'
+  | 'brand'
+  | 'subBrand'
+  | 'model'
+  | 'colorway'
+  | 'category'
+  | 'subCategory'
+  | 'material'
+  | 'confidence'
+  | 'conditionCode'
+  | 'candidates'
+  | 'raw'
+>;
+
+/** 409 NOT_PROCESSING unless the scan is past /finish and not yet closed. */
+export function assertAcceptsResults(scan: ScanEntity): void {
+  if (SUBMITTABLE.includes(scan.status)) return;
+  throw new ApiError(
+    HttpStatus.CONFLICT,
+    'NOT_PROCESSING',
+    scan.status === 'draft'
+      ? 'Scan is still a draft; call /finish before submitting results'
+      : `Scan is ${scan.status}; it no longer accepts results`,
+  );
+}
+
+/** 409 RESULT_LOCKED once F3 has confirmed or rejected the shoe. */
+export function assertResultOpen(shoe: ScanShoeEntity): void {
+  if (!(LOCKED_SHOE_STATUSES as readonly string[]).includes(shoe.status)) {
+    return;
+  }
+  throw new ApiError(
+    HttpStatus.CONFLICT,
+    'RESULT_LOCKED',
+    `Shoe is ${shoe.status}; its result can no longer be changed`,
+  );
+}
+
 @Injectable()
 export class ScanResultService {
   private readonly logger = new Logger(ScanResultService.name);
@@ -79,24 +122,9 @@ export class ScanResultService {
     const candidates = this.validateCandidates(dto.candidates ?? []);
     this.validateRaw(dto.raw);
 
-    return this.inScanTx(userId, scanId, SUBMITTABLE, async (m, scan) => {
-      const shoe = await m.findOne(ScanShoeEntity, {
-        where: { id: shoeId, scanId: scan.id },
-      });
-      if (!shoe) throw notFound('SHOE_NOT_FOUND', 'Shoe not found');
-      if ((LOCKED_SHOE_STATUSES as readonly string[]).includes(shoe.status)) {
-        throw new ApiError(
-          HttpStatus.CONFLICT,
-          'RESULT_LOCKED',
-          `Shoe is ${shoe.status}; its result can no longer be changed`,
-        );
-      }
-
-      const existing = await m.findOne(ScanShoeResultEntity, {
-        where: { scanShoeId: shoe.id },
-      });
-      const fields = {
-        source: 'device' as const,
+    return this.inScanTx(userId, scanId, (m, scan) =>
+      this.writeResult(m, scan, shoeId, {
+        source: 'device',
         outcome,
         modelVersion: dto.modelVersion,
         brand: dto.brand ?? null,
@@ -110,40 +138,63 @@ export class ScanResultService {
         conditionCode: dto.conditionCode ?? null,
         candidates,
         raw: dto.raw ?? null,
-        // Server clock only — never taken from the body (see the DTO header).
-        submittedAt: new Date(),
-      };
-      // save() rather than insert/update: a free-form jsonb column cannot be
-      // expressed in TypeORM's QueryDeepPartialEntity, and setting `id` makes
-      // this one call the upsert — INSERT when absent, UPDATE when present.
-      const row = m.create(ScanShoeResultEntity, {
-        scanShoeId: shoe.id,
-        ...fields,
-      });
-      if (existing) row.id = existing.id;
-      await m.save(row);
-      await m.update(ScanShoeEntity, { id: shoe.id }, { status: outcome });
+      }),
+    );
+  }
 
-      const scanStatus = await this.advanceScanIfResolved(m, scan);
-
-      // Re-read so createdAt/updatedAt are the committed values, not guesses.
-      const saved = await m.findOneOrFail(ScanShoeResultEntity, {
-        where: { scanShoeId: shoe.id },
-      });
-      this.logger.log(
-        `scan ${scan.id} shoe ${shoe.id} result ${outcome} (${existing ? 'replaced' : 'created'})`,
-      );
-      return {
-        shoeId: shoe.id,
-        label: labelFor(shoe.position),
-        replaced: existing !== null,
-        status: resultStatusFor(outcome),
-        // E10 returns the single submitted result with raw payload included so the
-        // caller can inspect the original model output immediately.
-        result: toResultView(saved, true),
-        scanStatus,
-      };
+  /**
+   * The shared E10 / analyze write: upsert the shoe's one result row, move the
+   * shoe to identified/failed, flip the scan to 'review' on the last shoe, and
+   * build the SubmitResultView — one code path, so the analyze response is the
+   * E10 response by construction. Must run inside inScanTx (scan row locked).
+   */
+  async writeResult(
+    m: EntityManager,
+    scan: ScanEntity,
+    shoeId: string,
+    fields: ResultFields,
+  ): Promise<SubmitResultView> {
+    const shoe = await m.findOne(ScanShoeEntity, {
+      where: { id: shoeId, scanId: scan.id },
     });
+    if (!shoe) throw notFound('SHOE_NOT_FOUND', 'Shoe not found');
+    assertResultOpen(shoe);
+
+    const existing = await m.findOne(ScanShoeResultEntity, {
+      where: { scanShoeId: shoe.id },
+    });
+    // save() rather than insert/update: a free-form jsonb column cannot be
+    // expressed in TypeORM's QueryDeepPartialEntity, and setting `id` makes
+    // this one call the upsert — INSERT when absent, UPDATE when present.
+    const row = m.create(ScanShoeResultEntity, {
+      scanShoeId: shoe.id,
+      ...fields,
+      // Server clock only — never taken from the body (see the DTO header).
+      submittedAt: new Date(),
+    });
+    if (existing) row.id = existing.id;
+    await m.save(row);
+    await m.update(ScanShoeEntity, { id: shoe.id }, { status: fields.outcome });
+
+    const scanStatus = await this.advanceScanIfResolved(m, scan);
+
+    // Re-read so createdAt/updatedAt are the committed values, not guesses.
+    const saved = await m.findOneOrFail(ScanShoeResultEntity, {
+      where: { scanShoeId: shoe.id },
+    });
+    this.logger.log(
+      `scan ${scan.id} shoe ${shoe.id} ${fields.source} result ${fields.outcome} (${existing ? 'replaced' : 'created'})`,
+    );
+    return {
+      shoeId: shoe.id,
+      label: labelFor(shoe.position),
+      replaced: existing !== null,
+      status: resultStatusFor(fields.outcome),
+      // E10 returns the single submitted result with raw payload included so the
+      // caller can inspect the original model output immediately.
+      result: toResultView(saved, true),
+      scanStatus,
+    };
   }
 
   // ─── E11 per-shoe results ────────────────────────────────────────────────
@@ -164,27 +215,19 @@ export class ScanResultService {
 
   /**
    * Runs `work` in a transaction holding a row lock on the caller's scan, after
-   * asserting the scan is in one of `allowed`. Mirrors ScanService.inDraftTx;
-   * the response is built inside the transaction so a committed change can
-   * never be reported as a failure.
+   * asserting the scan accepts results. Mirrors ScanService.inDraftTx; the
+   * response is built inside the transaction so a committed change can never
+   * be reported as a failure. Public for the analyze route, which must re-check
+   * state here because the scan may have moved while ShoeDNA ran.
    */
-  private async inScanTx<T>(
+  async inScanTx<T>(
     userId: string,
     scanId: string,
-    allowed: readonly ScanStatus[],
     work: (m: EntityManager, scan: ScanEntity) => Promise<T>,
   ): Promise<T> {
     return this.dataSource.transaction(async (m) => {
       const scan = await findOwnedScan(m, userId, scanId, true);
-      if (!allowed.includes(scan.status)) {
-        throw new ApiError(
-          HttpStatus.CONFLICT,
-          'NOT_PROCESSING',
-          scan.status === 'draft'
-            ? 'Scan is still a draft; call /finish before submitting results'
-            : `Scan is ${scan.status}; it no longer accepts results`,
-        );
-      }
+      assertAcceptsResults(scan);
       const out = await work(m, scan);
       await touchScan(m, scan.id);
       return out;

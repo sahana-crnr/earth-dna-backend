@@ -1,8 +1,10 @@
 // F1 scan sessions + F2 identification results + F3 review: entities, services,
 // controllers, abandon job. F3 imports CatalogModule to resolve brand / size ids
 // and ShoesModule (F5) for the value provider and the shoe_photos hooks. Multer limits come from scan config so uploads are capped before
-// bytes pile up in memory. F2 adds no Multer or storage dependency — results are
-// plain JSON and must keep working when SHOE_PHOTOS_BUCKET is unset.
+// bytes pile up in memory. F2 submit/results add no Multer or storage
+// dependency — results are plain JSON and must keep working when
+// SHOE_PHOTOS_BUCKET is unset. The analyze fallback (E10b) is the exception:
+// it reads the stored photos and calls ShoeDNA via IntegrationsModule (F7).
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MulterModule } from '@nestjs/platform-express';
@@ -12,6 +14,7 @@ import { AuthModule } from '../auth/auth.module';
 import type { ScanConfig } from '../config/scan.config';
 import { StorageModule } from '../storage/storage.module';
 import { CatalogModule } from '../catalog/catalog.module';
+import { IntegrationsModule } from '../integrations/integrations.module';
 import { ShoeEntity } from '../shoes/entities/shoe.entity';
 import { ShoesModule } from '../shoes/shoes.module';
 import { ScanEntity } from './entities/scan.entity';
@@ -21,6 +24,9 @@ import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
 import { ShoeFeedbackEntity } from './entities/shoe-feedback.entity';
 import { ScanAbandonJob } from './scan-abandon.job';
 import { ScanController } from './scan.controller';
+import { ScanAnalyzeController } from './scan-analyze.controller';
+import { ScanAnalyzeService } from './scan-analyze.service';
+import { ShoeDnaClient } from './shoedna.client';
 import { ScanResultController } from './scan-result.controller';
 import { ScanService } from './scan.service';
 import { ScanResultService } from './scan-result.service';
@@ -34,6 +40,7 @@ import { ScanReviewService } from './scan-review.service';
     StorageModule,
     CatalogModule,
     ShoesModule,
+    IntegrationsModule,
     TypeOrmModule.forFeature([
       ScanEntity,
       ScanShoeEntity,
@@ -60,10 +67,17 @@ import { ScanReviewService } from './scan-review.service';
       },
     }),
   ],
-  controllers: [ScanController, ScanResultController, ScanReviewController],
+  controllers: [
+    ScanController,
+    ScanResultController,
+    ScanAnalyzeController,
+    ScanReviewController,
+  ],
   providers: [
     ScanService,
     ScanResultService,
+    ScanAnalyzeService,
+    ShoeDnaClient,
     ScanResultsBuilder,
     ScanReviewService,
     ScanAbandonJob,
