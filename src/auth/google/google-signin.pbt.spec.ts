@@ -7,6 +7,7 @@
 // Shrinking is left enabled and no seed is pinned, so fast-check prints both the
 // seed and the shrunk minimal counterexample on failure (PBT-08). Reproduce a
 // failure with: fc.assert(prop, { seed: <printed>, path: '<printed>' })
+import { DataSource } from 'typeorm';
 import fc from 'fast-check';
 import { instanceToPlain } from 'class-transformer';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -238,6 +239,8 @@ describe('googleLogin properties', () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: FacebookTokenVerifier, useValue: { verify: jest.fn() } },
         { provide: AppleTokenVerifier, useValue: { verify: jest.fn() } },
+        // Only resetPassword uses it; these properties never reach it.
+        { provide: DataSource, useValue: {} },
         {
           provide: GoogleTokenVerifier,
           useValue: {

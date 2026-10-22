@@ -6,6 +6,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
 import { Exclude } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
@@ -17,6 +18,9 @@ export type AuthProvider = 'local' | 'google' | 'facebook' | 'apple';
 /** Providers that hand us a stable user ID (`sub`) we key accounts on. */
 export type SocialProvider = Exclude<AuthProvider, 'local'>;
 
+// Case-insensitive uniqueness, created by migration NormalizeUserEmails (an
+// expression index TypeORM cannot describe, hence synchronize: false).
+@Index('UQ_users_email_lower', { synchronize: false })
 @Entity('users')
 export class UserEntity {
   @ApiProperty({ example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890' })
@@ -44,6 +48,12 @@ export class UserEntity {
   @Exclude()
   @Column({ type: 'timestamptz', nullable: true })
   resetPasswordExpiry: Date | null;
+
+  // Set by a password reset. JwtAuthGuard rejects access tokens issued before
+  // it, so a reset signs out every device, not only their refresh tokens.
+  @Exclude()
+  @Column({ type: 'timestamptz', nullable: true, select: false })
+  passwordChangedAt?: Date | null; // select: false, absent unless selected
 
   // Nullable since Google Sign-In: a Google ID token carries no country.
   @ApiProperty({ example: 'USA', nullable: true })

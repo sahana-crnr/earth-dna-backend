@@ -8,6 +8,7 @@ import {
   IsOptional,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { NormalizeEmail } from '../../common/decorators/normalize-email.decorator';
 
 export class CreateUserDto {
   @ApiProperty({ example: 'Jane Doe' })
@@ -15,6 +16,7 @@ export class CreateUserDto {
   fullName: string;
 
   @ApiProperty({ example: 'jane@example.com' })
+  @NormalizeEmail()
   @IsEmail({}, { message: 'Please provide a valid email address' })
   email: string;
 

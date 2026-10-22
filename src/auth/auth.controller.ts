@@ -437,12 +437,8 @@ export class AuthController {
   async forgotPassword(
     @Body() dto: ForgotPasswordDto,
   ): Promise<{ message: string }> {
-    await this.authService.forgotPassword(dto.email);
-    // Always return the same message — never reveal whether the email exists
-    return {
-      message:
-        'If an account with that email exists, a password reset link has been sent.',
-    };
+    // Same message whether or not the email exists (see AuthService).
+    return this.authService.forgotPassword(dto.email);
   }
 
   // Serves the HTML reset-password form in the browser.
@@ -465,14 +461,10 @@ export class AuthController {
   async resetPassword(
     @Body() dto: ResetPasswordDto,
   ): Promise<{ message: string }> {
-    await this.authService.resetPassword(
+    return this.authService.resetPassword(
       dto.token,
       dto.newPassword,
       dto.confirmPassword,
     );
-    return {
-      message:
-        'Your password has been reset successfully. You may now log in with your new password.',
-    };
   }
 }

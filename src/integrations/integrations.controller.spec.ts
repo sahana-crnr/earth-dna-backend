@@ -54,6 +54,8 @@ describe('IntegrationsController access (F7)', () => {
               ROLES[id]
                 ? Promise.resolve({ id, role: ROLES[id] })
                 : Promise.reject(new NotFoundException()),
+            // JwtAuthGuard: no password resets in these tests.
+            getPasswordChangedAt: () => Promise.resolve(null),
           },
         },
       ],
