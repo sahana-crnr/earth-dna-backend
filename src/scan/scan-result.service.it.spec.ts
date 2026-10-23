@@ -21,6 +21,9 @@ import { ScanShoeEntity } from './entities/scan-shoe.entity';
 import { ScanShoeResultEntity } from './entities/scan-shoe-result.entity';
 import { ScanService } from './scan.service';
 import { ScanResultService } from './scan-result.service';
+import { ScanAnalyzeService } from './scan-analyze.service';
+import { ShoeDnaClient, InferenceFailedError } from './shoedna.client';
+import { IntegrationsService } from '../integrations/integrations.service';
 import { ScanResultsBuilder } from './scan-results.builder';
 import { ShoeViewMapper } from '../shoes/shoe-view.mapper';
 import { CatalogService } from '../catalog/catalog.service';
@@ -74,6 +77,7 @@ const CFG: ScanConfig = {
   resultMaxCandidates: 3,
   // Small on purpose, so the oversize-blob test stays cheap.
   resultRawMaxBytes: 200,
+  inferenceTimeoutMs: 25000,
   valuePlaceholder: true,
   thumbnailView: 'right',
 };
@@ -111,7 +115,10 @@ d('ScanResultService (integration, real Postgres)', () => {
   let moduleRef: TestingModule;
   let scans: ScanService;
   let results: ScanResultService;
+  let analyzer: ScanAnalyzeService;
   let ds: DataSource;
+  // Fake F7 + ShoeDNA: the real HTTP call is covered in shoedna.client.spec.ts.
+  const identify = jest.fn();
   const users: string[] = [];
 
   async function newUser(): Promise<string> {
@@ -187,10 +194,24 @@ d('ScanResultService (integration, real Postgres)', () => {
       providers: [
         ScanService,
         ScanResultService,
+        ScanAnalyzeService,
         ScanResultsBuilder,
         ShoeViewMapper,
         CatalogService,
         { provide: PhotoStorage, useValue: storage },
+        { provide: ShoeDnaClient, useValue: { identify } },
+        {
+          provide: IntegrationsService,
+          useValue: {
+            getActive: () =>
+              Promise.resolve({
+                name: 'shoedna',
+                baseUrl: 'https://shoedna.test',
+                version: 'v2.1',
+                authRef: null,
+              }),
+          },
+        },
         {
           provide: ConfigService,
           useValue: {
@@ -202,6 +223,7 @@ d('ScanResultService (integration, real Postgres)', () => {
     }).compile();
     scans = moduleRef.get(ScanService);
     results = moduleRef.get(ScanResultService);
+    analyzer = moduleRef.get(ScanAnalyzeService);
     ds = moduleRef.get(DataSource);
   }, 60_000);
 
@@ -492,5 +514,128 @@ d('ScanResultService (integration, real Postgres)', () => {
 
     await ds.getRepository(ScanEntity).delete({ id: scanId });
     expect(await rowsFor(shoeIds[0])).toBe(0);
+  });
+
+  // ─── analyze: the server-side fallback (E10b) ────────────────────────────
+  describe('analyze', () => {
+    const SERVER_ANSWER = {
+      modelVersion: 'shoedna-server-2.0.1',
+      brand: 'Nike',
+      confidence: 0.8765,
+      conditionCode: 'C3',
+      candidates: [{ brand: 'Nike', model: 'Pegasus', confidence: 0.8765 }],
+    };
+    beforeEach(() => identify.mockReset().mockResolvedValue(SERVER_ANSWER));
+
+    it('returns exactly the E10 response shape and records source=server', async () => {
+      const userId = await newUser();
+      const a = await finishedScan(userId);
+      const b = await finishedScan(userId);
+
+      const device = await results.submit(
+        userId,
+        a.scanId,
+        a.shoeIds[0],
+        RESULT,
+      );
+      const server = await analyzer.analyze(userId, b.scanId, b.shoeIds[0]);
+
+      expect(Object.keys(server).sort()).toEqual(Object.keys(device).sort());
+      expect(Object.keys(server.result).sort()).toEqual(
+        Object.keys(device.result).sort(),
+      );
+      expect(server).toMatchObject({
+        replaced: false,
+        status: 'identified',
+        scanStatus: 'review',
+        result: {
+          source: 'server',
+          brand: 'Nike',
+          confidence: 0.8765,
+          modelVersion: 'shoedna-server-2.0.1',
+          condition: { code: 'C3' },
+        },
+      });
+      // The model saw every stored view of this shoe, signed.
+      const [, req] = identify.mock.calls[0] as [
+        unknown,
+        { photos: { url: string }[] },
+      ];
+      expect(req.photos).toHaveLength(SHOE_VIEWS.length);
+      expect(req.photos.every((p) => p.url.startsWith('fake://'))).toBe(true);
+    });
+
+    it('replaces a device "failed" result and resolves the scan on the last shoe', async () => {
+      const userId = await newUser();
+      const { scanId, shoeIds } = await finishedScan(userId, 2);
+      await results.submit(userId, scanId, shoeIds[0], RESULT);
+      await results.submit(userId, scanId, shoeIds[1], {
+        modelVersion: 'shoedna-tflite-1.4.2',
+        outcome: 'failed',
+      });
+      expect(await scanStatus(scanId)).toBe('review');
+
+      const view = await analyzer.analyze(userId, scanId, shoeIds[1]);
+      expect(view.replaced).toBe(true);
+      expect(view.result.source).toBe('server');
+      expect(await shoeStatus(shoeIds[1])).toBe('identified');
+      expect(await rowsFor(shoeIds[1])).toBe(1);
+    });
+
+    it('refuses a shoe the device already identified and leaves its row alone', async () => {
+      const userId = await newUser();
+      const { scanId, shoeIds } = await finishedScan(userId);
+      const device = await results.submit(userId, scanId, shoeIds[0], RESULT);
+
+      expect(await code(analyzer.analyze(userId, scanId, shoeIds[0]))).toBe(
+        'ALREADY_IDENTIFIED',
+      );
+      expect(identify).not.toHaveBeenCalled();
+      const row = await ds
+        .getRepository(ScanShoeResultEntity)
+        .findOneByOrFail({ scanShoeId: shoeIds[0] });
+      expect(row.source).toBe('device');
+      expect(row.submittedAt.toISOString()).toBe(device.result.submittedAt);
+      expect(await shoeStatus(shoeIds[0])).toBe('identified');
+    });
+
+    it('the last shoe resolved by analyze flips the scan to review', async () => {
+      const userId = await newUser();
+      const { scanId, shoeIds } = await finishedScan(userId, 2);
+      await results.submit(userId, scanId, shoeIds[0], RESULT);
+      expect(await scanStatus(scanId)).toBe('processing');
+
+      const view = await analyzer.analyze(userId, scanId, shoeIds[1]);
+      expect(view.scanStatus).toBe('review');
+      expect(await scanStatus(scanId)).toBe('review');
+    });
+
+    it("refuses before /finish and for someone else's scan", async () => {
+      const userId = await newUser();
+      const s = await scans.createDraft(userId);
+      const shoeId = (await scans.addShoe(userId, s.id)).shoes[0].id;
+      expect(await code(analyzer.analyze(userId, s.id, shoeId))).toBe(
+        'NOT_PROCESSING',
+      );
+
+      const other = await newUser();
+      const theirs = await finishedScan(other);
+      expect(
+        await code(analyzer.analyze(userId, theirs.scanId, theirs.shoeIds[0])),
+      ).toBe('SCAN_NOT_FOUND');
+      expect(identify).not.toHaveBeenCalled();
+    });
+
+    it('a failed model call writes nothing', async () => {
+      const userId = await newUser();
+      const { scanId, shoeIds } = await finishedScan(userId);
+      identify.mockRejectedValue(new InferenceFailedError('status 500'));
+
+      expect(await code(analyzer.analyze(userId, scanId, shoeIds[0]))).toBe(
+        'INFERENCE_FAILED',
+      );
+      expect(await rowsFor(shoeIds[0])).toBe(0);
+      expect(await scanStatus(scanId)).toBe('processing');
+    });
   });
 });
