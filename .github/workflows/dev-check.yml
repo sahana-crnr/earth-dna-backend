@@ -77,7 +77,10 @@ jobs:
           version: ${{ env.UV_VERSION }}
       - run: uv sync --locked --all-groups
       - run: uv export --frozen --no-emit-project --no-hashes --all-groups -o requirements-audit.txt
-      - run: uv run pip-audit -r requirements-audit.txt --strict --progress-spinner off
+      # --no-deps: the export is fully pinned, so no resolution venv is needed
+      # (pip-audit would otherwise build one with ensurepip, which uv-managed
+      # Pythons on the runner do not ship)
+      - run: uv run pip-audit -r requirements-audit.txt --no-deps --strict --progress-spinner off
 
   image:
     name: Docker build
