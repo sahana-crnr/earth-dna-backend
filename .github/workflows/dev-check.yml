@@ -80,7 +80,7 @@ jobs:
       # --no-deps: the export is fully pinned, so no resolution venv is needed
       # (pip-audit would otherwise build one with ensurepip, which uv-managed
       # Pythons on the runner do not ship)
-      - run: uv run pip-audit -r requirements-audit.txt --no-deps --strict --progress-spinner off
+      - run: uv run pip-audit -r requirements-audit.txt --no-deps --disable-pip --strict --progress-spinner off
 
   image:
     name: Docker build
