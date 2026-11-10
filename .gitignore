@@ -1,21 +1,22 @@
-# Dependencies
-node_modules/
-
-# Build output
-dist/
-build/
-
 # Environment files
 .env
 .env.local
 .env.*.local
-.env.development
-.env.production
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+*.egg-info/
+requirements-audit.txt
 
 # Logs
 logs/
 *.log
-npm-debug.log*
 
 # OS
 .DS_Store
@@ -27,15 +28,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# TypeORM
-ormconfig.json
-
-# Coverage
-coverage/
-
-# Misc
-*.tsbuildinfo
-
 # Local docs / planning
 docs/
 
@@ -45,6 +37,8 @@ docs/
 # Claude project instructions (local only, not committed)
 CLAUDE.md
 
-
-# Team feature guides (F3-D16) live in git; the generic docs/ rule above must not hide them
+# Team feature guides live in git; the generic docs/ rule above must not hide them
 !.claude/docs/
+
+# parity fixture generated at run time (1 MiB)
+tools/parity/fixtures/big.jpg

@@ -1,0 +1,931 @@
+# Parity suite: every request is sent to Node and to Python; status and JSON
+# body must be identical except the keys listed in `ignore`.
+#
+#   uv run python -m tools.parity.run --node http://localhost:1234 --py http://localhost:1235
+#
+# Each unit appends its routes here. Keys: name, method, path, headers?, json?,
+# body? (raw string), ignore? (extra JSON paths to ignore for this case),
+# expect_status? (sanity, applies to both).
+ignore:
+  - timestamp
+  - url            # presigned URLs differ by signature and date
+  - thumbnailUrl
+  - photoUrl
+  # server-side clocks: every stored timestamp differs between the two runs
+  - createdAt
+  - updatedAt
+  - submittedAt
+  - finishedAt
+  - sharedAt
+  - computedAt
+  - actionTakenAt
+  - valueComputedAt
+  # The placeholder value (recommendation + resale range) is picked by a hash
+  # of the scan-shoe id, which differs per target. The hash itself is pinned
+  # against a Node golden in tests/scan/test_result_review_rules.py.
+  - recommendedAction
+  - resale
+  - resaleBucket
+  - recommendation
+  - value
+  - potentialValue
+  - demandNote
+cases:
+  # ─── U0 foundation ───────────────────────────────────────────────────────
+  - name: health
+    smoke: true
+    method: GET
+    path: /api/v1
+    expect_status: 200
+  - name: unknown-route
+    smoke: true
+    method: GET
+    path: /api/v1/nope
+    expect_status: 404
+  - name: unknown-method
+    smoke: true
+    method: DELETE
+    path: /api/v1
+    expect_status: 404
+  - name: no-token
+    smoke: true
+    method: GET
+    path: /api/v1/auth/profile
+    expect_status: 401
+  - name: basic-not-bearer
+    smoke: true
+    method: GET
+    path: /api/v1/auth/profile
+    headers: { Authorization: "Basic abc" }
+    expect_status: 401
+  - name: bad-token
+    smoke: true
+    method: GET
+    path: /api/v1/auth/profile
+    headers: { Authorization: "Bearer x.y.z" }
+    expect_status: 401
+  - name: bad-token-query-in-path
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/colours?brandId=nope
+    headers: { Authorization: "Bearer x" }
+    expect_status: 401
+  # ─── U1 auth ─────────────────────────────────────────────────────────────
+  # `${run}` is a per-run hex id and `${target}` is node|py, so each service
+  # registers its own brand-new user in the shared local DB; `save` keeps
+  # tokens per target (they differ by design and are ignored in the diff).
+  # Note: the e-mail then differs between the two bodies, so user.email is
+  # ignored on the cases that echo it.
+  - name: login-empty-body
+    smoke: true
+    method: POST
+    path: /api/v1/auth/login
+    json: {}
+    expect_status: 400
+  - name: login-unknown-property
+    smoke: true
+    method: POST
+    path: /api/v1/auth/login
+    json: { email: "x", password: 5, foo: 1 }
+    expect_status: 400
+  - name: register-empty
+    smoke: true
+    method: POST
+    path: /api/v1/auth/register
+    json: {}
+    expect_status: 400
+  - name: register-ok
+    smoke: true
+    method: POST
+    path: /api/v1/auth/register
+    json: { fullName: "Parity User", email: "parity-${target}-${run}@example.test", password: "Passw0rd!xyz", country: "US" }
+    expect_status: 201
+    save: { access: data.accessToken, refresh: data.refreshToken, userId: data.user.id }
+    ignore: [data.accessToken, data.refreshToken, data.user.id, data.user.email, data.user.createdAt, data.user.updatedAt]
+  - name: register-duplicate
+    smoke: true
+    method: POST
+    path: /api/v1/auth/register
+    json: { fullName: "Parity User", email: "PARITY-${target}-${run}@example.test", password: "Passw0rd!xyz", country: "US" }
+    expect_status: 409
+  - name: login-wrong-password
+    smoke: true
+    method: POST
+    path: /api/v1/auth/login
+    json: { email: "parity-${target}-${run}@example.test", password: "wrong-wrong" }
+    expect_status: 401
+  - name: login-unknown-user
+    method: POST
+    path: /api/v1/auth/login
+    json: { email: "nobody-${run}@example.test", password: "wrong-wrong" }
+    expect_status: 401
+  - name: login-ok
+    smoke: true
+    method: POST
+    path: /api/v1/auth/login
+    json: { email: "  Parity-${target}-${run}@EXAMPLE.test ", password: "Passw0rd!xyz" }
+    expect_status: 200
+    ignore: [data.accessToken, data.refreshToken, data.user.id, data.user.email, data.user.createdAt, data.user.updatedAt]
+  - name: profile-ok
+    smoke: true
+    method: GET
+    path: /api/v1/auth/profile
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+    ignore: [data.id, data.email, data.createdAt, data.updatedAt]
+  - name: refresh-ok
+    smoke: true
+    method: POST
+    path: /api/v1/auth/refresh
+    json: { refreshToken: "${refresh}" }
+    expect_status: 200
+    save: { refresh2: data.refreshToken }
+    ignore: [data.accessToken, data.refreshToken, data.user.id, data.user.email, data.user.createdAt, data.user.updatedAt]
+  - name: refresh-reuse-is-theft
+    method: POST
+    path: /api/v1/auth/refresh
+    json: { refreshToken: "${refresh}" }
+    expect_status: 401
+  - name: refresh-rotated-token-also-dead
+    method: POST
+    path: /api/v1/auth/refresh
+    json: { refreshToken: "${refresh2}" }
+    expect_status: 401
+  - name: refresh-empty
+    method: POST
+    path: /api/v1/auth/refresh
+    json: {}
+    expect_status: 400
+  - name: refresh-garbage
+    method: POST
+    path: /api/v1/auth/refresh
+    json: { refreshToken: "nope" }
+    expect_status: 401
+  - name: logout-garbage
+    method: POST
+    path: /api/v1/auth/logout
+    json: { refreshToken: "nope" }
+    expect_status: 200
+  - name: logout-all
+    smoke: true
+    method: POST
+    path: /api/v1/auth/logout-all
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: logout-all-no-token
+    method: POST
+    path: /api/v1/auth/logout-all
+    expect_status: 401
+  - name: google-empty
+    method: POST
+    path: /api/v1/auth/google
+    json: {}
+    expect_status: 400
+  - name: google-bad-token
+    method: POST
+    path: /api/v1/auth/google
+    json: { idToken: "x.y.z" }
+    expect_status: 401
+  - name: facebook-empty
+    method: POST
+    path: /api/v1/auth/facebook
+    json: {}
+    expect_status: 400
+  - name: facebook-bad-token
+    method: POST
+    path: /api/v1/auth/facebook
+    json: { accessToken: "opaque123" }
+    expect_status: 401
+  - name: apple-empty-bad-name
+    method: POST
+    path: /api/v1/auth/apple
+    json: { fullName: 5 }
+    expect_status: 400
+  - name: apple-bad-token
+    method: POST
+    path: /api/v1/auth/apple
+    json: { identityToken: "x.y.z" }
+    expect_status: 401
+  - name: forgot-bad-email
+    method: POST
+    path: /api/v1/auth/forgot-password
+    json: { email: "nope" }
+    expect_status: 400
+  - name: forgot-unknown-email
+    method: POST
+    path: /api/v1/auth/forgot-password
+    json: { email: "nobody-${run}@example.test" }
+    expect_status: 200
+  - name: reset-empty
+    method: POST
+    path: /api/v1/auth/reset-password
+    json: {}
+    expect_status: 400
+  - name: reset-mismatch
+    method: POST
+    path: /api/v1/auth/reset-password
+    json: { token: "t", newPassword: "abcdefgh", confirmPassword: "abcdefgi" }
+    expect_status: 400
+  - name: reset-bad-token
+    method: POST
+    path: /api/v1/auth/reset-password
+    json: { token: "t", newPassword: "abcdefgh", confirmPassword: "abcdefgh" }
+    expect_status: 400
+  - name: reset-form-html
+    method: GET
+    path: /api/v1/auth/reset-password?token=a%3Cb%22c
+    expect_status: 200
+  # ─── U2 catalog (JWT from register-ok; same local DB, so ids match) ──────
+  - name: catalog-no-token
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/brands
+    expect_status: 401
+  - name: catalog-options
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/options
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-categories
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/categories
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-brands-prefix
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/brands?q=ni
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+    save: { nike: data.items.0.id }
+  - name: catalog-brands-all
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/brands
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-brands-wildcard-escaped
+    method: GET
+    path: /api/v1/catalog/brands?q=%25
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-brands-q-too-long
+    method: GET
+    path: /api/v1/catalog/brands?q=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: catalog-sizes-generic
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/sizes
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-sizes-bad-uuid
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/sizes?brandId=nope
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: catalog-sizes-unknown-brand-falls-back
+    method: GET
+    path: /api/v1/catalog/sizes?brandId=00000000-0000-4000-8000-000000000000
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-sizes-nike
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/sizes?brandId=${nike}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-models-missing-brand
+    method: GET
+    path: /api/v1/catalog/models
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: catalog-models-extra-param
+    method: GET
+    path: /api/v1/catalog/models?q=a&brandId=00000000-0000-4000-8000-000000000000&extra=1
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: catalog-models-nike-air
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/models?brandId=${nike}&q=air
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-models-nike-all
+    method: GET
+    path: /api/v1/catalog/models?brandId=${nike}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-colours-nike
+    smoke: true
+    method: GET
+    path: /api/v1/catalog/colours?brandId=${nike}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-colours-nike-model
+    method: GET
+    path: /api/v1/catalog/colours?brandId=${nike}&model=Air%20Max%2090
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: catalog-colours-missing-brand
+    method: GET
+    path: /api/v1/catalog/colours
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  # ─── U3 scans F1 (own user per target; same local S3 emulator) ──────────
+  - name: scan-create
+    smoke: true
+    method: POST
+    path: /api/v1/scans
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+    save: { scan: data.id }
+    ignore: [data.id, data.createdAt, data.updatedAt]
+  - name: scan-list-bad-query
+    method: GET
+    path: /api/v1/scans?status=nope&limit=abc&offset=-1
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: scan-list-draft
+    smoke: true
+    method: GET
+    path: /api/v1/scans?status=draft&limit=1&offset=0
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+    ignore: [data.items, data.total]
+  - name: scan-get
+    smoke: true
+    method: GET
+    path: /api/v1/scans/${scan}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+    ignore: [data.id, data.createdAt, data.updatedAt]
+  - name: scan-get-bad-uuid
+    method: GET
+    path: /api/v1/scans/not-a-uuid
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: scan-get-unknown
+    smoke: true
+    method: GET
+    path: /api/v1/scans/00000000-0000-4000-8000-000000000000
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 404
+  - name: scan-add-shoe-1
+    smoke: true
+    method: POST
+    path: /api/v1/scans/${scan}/shoes
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+    save: { shoe1: data.shoes.0.id }
+    ignore: [data.id, data.createdAt, data.updatedAt, data.shoes.0.id]
+  - name: scan-add-shoe-2
+    method: POST
+    path: /api/v1/scans/${scan}/shoes
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+    save: { shoe2: data.shoes.1.id }
+    ignore: [data.id, data.createdAt, data.updatedAt, data.shoes.0.id, data.shoes.1.id]
+  - name: scan-add-shoe-3
+    method: POST
+    path: /api/v1/scans/${scan}/shoes
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+    ignore: [data]
+  - name: scan-add-shoe-4
+    method: POST
+    path: /api/v1/scans/${scan}/shoes
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+    ignore: [data]
+  - name: scan-add-shoe-5-refused
+    method: POST
+    path: /api/v1/scans/${scan}/shoes
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 409
+  - name: scan-finish-incomplete
+    method: POST
+    path: /api/v1/scans/${scan}/finish
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 409
+    ignore: [details.incomplete]
+  - name: scan-delete-nonempty
+    method: DELETE
+    path: /api/v1/scans/${scan}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 409
+  - name: scan-upload-no-file
+    method: PUT
+    path: /api/v1/scans/${scan}/shoes/${shoe1}/photos/top
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: scan-upload-bad-view
+    method: PUT
+    path: /api/v1/scans/${scan}/shoes/${shoe1}/photos/front
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: scan-upload-wrong-field
+    method: PUT
+    path: /api/v1/scans/${scan}/shoes/${shoe1}/photos/top
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { files: [["photo", "a.jpg"]] }
+    expect_status: 400
+  - name: scan-upload-not-image
+    smoke: true
+    method: PUT
+    path: /api/v1/scans/${scan}/shoes/${shoe1}/photos/top
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { files: [["file", "c.gif"]] }
+    expect_status: 415
+  - name: scan-upload-too-large
+    method: PUT
+    path: /api/v1/scans/${scan}/shoes/${shoe1}/photos/top
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { files: [["file", "big.jpg"]] }
+    expect_status: 413
+  - name: scan-upload-bad-takenAt
+    method: PUT
+    path: /api/v1/scans/${scan}/shoes/${shoe1}/photos/top
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { fields: { takenAt: "yesterday" }, files: [["file", "a.jpg"]] }
+    expect_status: 400
+  - name: scan-upload-top
+    smoke: true
+    method: PUT
+    path: /api/v1/scans/${scan}/shoes/${shoe1}/photos/top
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { fields: { takenAt: "2026-09-29T10:15:00.000Z" }, files: [["file", "a.jpg"]] }
+    expect_status: 200
+    ignore: [data.id, data.createdAt, data.updatedAt, data.shoes.0.id, data.shoes.1.id, data.shoes.2.id, data.shoes.3.id, data.shoes.0.photos.0.updatedAt]
+  - name: scan-upload-retake-png
+    method: PUT
+    path: /api/v1/scans/${scan}/shoes/${shoe1}/photos/top
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { files: [["file", "b.png"]] }
+    expect_status: 200
+    ignore: [data.id, data.createdAt, data.updatedAt, data.shoes.0.id, data.shoes.1.id, data.shoes.2.id, data.shoes.3.id, data.shoes.0.photos.0.updatedAt]
+  - name: scan-delete-photo-missing
+    method: DELETE
+    path: /api/v1/scans/${scan}/shoes/${shoe1}/photos/sole
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 404
+  - name: scan-delete-photo
+    smoke: true
+    method: DELETE
+    path: /api/v1/scans/${scan}/shoes/${shoe1}/photos/top
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+    ignore: [data.id, data.createdAt, data.updatedAt, data.shoes.0.id, data.shoes.1.id, data.shoes.2.id, data.shoes.3.id]
+  # smoke-only (skipped in the Node/Python diff): leave no draft behind on dev
+  - name: smoke-scan-delete-shoe-1
+    smoke_only: true
+    method: DELETE
+    path: /api/v1/scans/${scan}/shoes/${shoe1}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: smoke-scan-delete-empty
+    smoke_only: true
+    method: DELETE
+    path: /api/v1/scans/${scan}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 204
+  - name: scan-batch-no-manifest
+    method: POST
+    path: /api/v1/scans/${scan}/photos/batch
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { fields: { x: "1" } }
+    expect_status: 400
+  - name: scan-batch-bad-json
+    method: POST
+    path: /api/v1/scans/${scan}/photos/batch
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { fields: { manifest: "{bad" } }
+    expect_status: 400
+  - name: scan-batch-bad-shape
+    method: POST
+    path: /api/v1/scans/${scan}/photos/batch
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { fields: { manifest: '{"shoes":[{"ref":"a","files":[]}],"x":1}' } }
+    expect_status: 400
+  - name: scan-batch-session-full
+    method: POST
+    path: /api/v1/scans/${scan}/photos/batch
+    headers: { Authorization: "Bearer ${access}" }
+    multipart:
+      fields: { manifest: '{"shoes":[{"ref":"a","files":[{"field":"f1","view":"top"}]},{"ref":"b","files":[{"field":"f2","view":"front"}]}]}' }
+      files: [["f1", "a.jpg"], ["f2", "b.png"]]
+    expect_status: 200
+    ignore: [data.session]
+  - name: scan-delete-shoe
+    method: DELETE
+    path: /api/v1/scans/${scan}/shoes/${shoe2}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+    ignore: [data.id, data.createdAt, data.updatedAt, data.shoes.0.id, data.shoes.1.id, data.shoes.2.id]
+  - name: scan-delete-shoe-again
+    method: DELETE
+    path: /api/v1/scans/${scan}/shoes/${shoe2}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 404
+  - name: scan-create-2
+    method: POST
+    path: /api/v1/scans
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+    save: { scan2: data.id }
+    ignore: [data.id, data.createdAt, data.updatedAt]
+  - name: scan-finish-no-shoes
+    method: POST
+    path: /api/v1/scans/${scan2}/finish
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 409
+  - name: scan-batch-full-shoe
+    method: POST
+    path: /api/v1/scans/${scan2}/photos/batch
+    headers: { Authorization: "Bearer ${access}" }
+    multipart:
+      fields: { manifest: '{"shoes":[{"ref":"a","files":[{"field":"f1","view":"top"},{"field":"f2","view":"right"},{"field":"f3","view":"left"},{"field":"f4","view":"sole"}]}]}' }
+      files: [["f1", "a.jpg"], ["f2", "b.png"], ["f3", "a.jpg"], ["f4", "a.jpg"]]
+    expect_status: 200
+    ignore: [data.session.id, data.session.createdAt, data.session.updatedAt, data.session.shoes.0.id, data.session.shoes.0.photos, data.results.0.shoeId]
+  - name: scan-finish-ok
+    method: POST
+    path: /api/v1/scans/${scan2}/finish
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+    ignore: [data.id, data.createdAt, data.updatedAt, data.finishedAt, data.shoes.0.id, data.shoes.0.photos]
+  - name: scan-not-draft-anymore
+    method: POST
+    path: /api/v1/scans/${scan2}/shoes
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 409
+  - name: scan-create-3
+    smoke: true
+    method: POST
+    path: /api/v1/scans
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+    save: { scan3: data.id }
+    ignore: [data.createdAt, data.updatedAt]
+  - name: scan-e20-delete-empty
+    smoke: true
+    method: DELETE
+    path: /api/v1/scans/${scan3}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 204
+  - name: scan-e20-gone
+    method: GET
+    path: /api/v1/scans/${scan3}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 404
+  # ─── U4 results + review (own finished scan per target) ─────────────────
+  - name: res-scan-create
+    method: POST
+    path: /api/v1/scans
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+    save: { rscan: data.id }
+    ignore: [data]
+  - name: res-add-shoe
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+    save: { rshoe: data.shoes.0.id }
+    ignore: [data]
+  - name: res-results-draft
+    method: GET
+    path: /api/v1/scans/${rscan}/results
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: res-submit-draft
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/result
+    headers: { Authorization: "Bearer ${access}" }
+    json: { modelVersion: "v1", brand: "Nike", confidence: 0.9 }
+    expect_status: 409
+  - name: res-upload-top
+    method: PUT
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/photos/top
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { files: [["file", "a.jpg"]] }
+    expect_status: 200
+    ignore: [data]
+  - name: res-upload-right
+    method: PUT
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/photos/right
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { files: [["file", "a.jpg"]] }
+    expect_status: 200
+    ignore: [data]
+  - name: res-upload-left
+    method: PUT
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/photos/left
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { files: [["file", "a.jpg"]] }
+    expect_status: 200
+    ignore: [data]
+  - name: res-upload-sole
+    method: PUT
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/photos/sole
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { files: [["file", "b.png"]] }
+    expect_status: 200
+    ignore: [data]
+  - name: res-finish
+    method: POST
+    path: /api/v1/scans/${rscan}/finish
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+    ignore: [data]
+  - name: res-results-waiting
+    method: GET
+    path: /api/v1/scans/${rscan}/results
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: res-submit-empty
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/result
+    headers: { Authorization: "Bearer ${access}" }
+    json: {}
+    expect_status: 400
+  - name: res-submit-incomplete
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/result
+    headers: { Authorization: "Bearer ${access}" }
+    json: { modelVersion: "v1" }
+    expect_status: 400
+  - name: res-submit-bad-fields
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/result
+    headers: { Authorization: "Bearer ${access}" }
+    json: { modelVersion: "v 1!", brand: "Nike", confidence: 2, candidates: [{ brand: "x", confidence: "a" }], outcome: "maybe", conditionCode: "C9" }
+    expect_status: 400
+  - name: res-submit-too-many
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/result
+    headers: { Authorization: "Bearer ${access}" }
+    json: { modelVersion: "v1", brand: "Nike", confidence: 0.5, candidates: [{ brand: "a", confidence: 0.1 }, { brand: "b", confidence: 0.2 }, { brand: "c", confidence: 0.3 }, { brand: "d", confidence: 0.4 }] }
+    expect_status: 400
+  - name: res-submit-duplicate
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/result
+    headers: { Authorization: "Bearer ${access}" }
+    json: { modelVersion: "v1", brand: "Nike", confidence: 0.5, candidates: [{ brand: "Nike", model: "Air", confidence: 0.1 }, { brand: " nike ", model: "AIR", confidence: 0.2 }] }
+    expect_status: 400
+  - name: res-submit-raw-deep
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/result
+    headers: { Authorization: "Bearer ${access}" }
+    json: { modelVersion: "v1", brand: "Nike", confidence: 0.5, raw: { a: { b: { c: { d: { e: { f: { g: 1 } } } } } } } }
+    expect_status: 400
+  - name: res-submit-ok
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/result
+    headers: { Authorization: "Bearer ${access}" }
+    json: { modelVersion: "shoedna-tflite-1.4.2", brand: "Nike", model: "Air Max 90", colorway: "Black/White", confidence: 0.92345, conditionCode: "C2", candidates: [{ brand: "Nike", model: "Air Max 90", confidence: 0.92345 }, { brand: "Adidas", confidence: 0.05 }], raw: { embeddingVersion: "v3" }, category: "Running Shoes", material: "Mesh" }
+    expect_status: 201
+  - name: res-results-identified
+    method: GET
+    path: /api/v1/scans/${rscan}/results
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: res-results-raw
+    method: GET
+    path: /api/v1/scans/${rscan}/results?include=raw
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: res-results-bad-include
+    method: GET
+    path: /api/v1/scans/${rscan}/results?include=x
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: res-analyze-already-identified
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/analyze
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 409
+  - name: res-submit-replace-failed
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/result
+    headers: { Authorization: "Bearer ${access}" }
+    json: { modelVersion: "v2", outcome: "failed" }
+    expect_status: 200
+  - name: res-analyze-not-configured
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/analyze
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 503
+  - name: rev-confirm-no-brand
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/confirm
+    headers: { Authorization: "Bearer ${access}" }
+    json: {}
+    expect_status: 400
+  - name: rev-reject-empty
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/reject
+    headers: { Authorization: "Bearer ${access}" }
+    json: {}
+    expect_status: 400
+  - name: rev-confirm-bad-brand
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/confirm
+    headers: { Authorization: "Bearer ${access}" }
+    json: { brandId: "00000000-0000-4000-8000-000000000000" }
+    expect_status: 400
+  - name: rev-confirm-bad-size
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/confirm
+    headers: { Authorization: "Bearer ${access}" }
+    json: { brandId: "${nike}", sizeId: "00000000-0000-4000-8000-000000000000" }
+    expect_status: 400
+  - name: rev-nike-sizes
+    method: GET
+    path: /api/v1/catalog/sizes?brandId=${nike}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+    save: { nikesize: data.items.3.id }
+  - name: rev-confirm-ok
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/confirm
+    headers: { Authorization: "Bearer ${access}" }
+    json: { brandId: "${nike}", model: "Air Max 90", color: "Black/White", sizeId: "${nikesize}", gender: "men" }
+    expect_status: 201
+    save: { myshoe: data.shoes.0.myShoeId }
+  - name: rev-confirm-again
+    method: POST
+    path: /api/v1/scans/${rscan}/shoes/${rshoe}/confirm
+    headers: { Authorization: "Bearer ${access}" }
+    json: {}
+    expect_status: 409
+  # ─── U5 shoes ────────────────────────────────────────────────────────────
+  - name: shoes-list
+    smoke: true
+    method: GET
+    path: /api/v1/shoes?limit=2
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: shoes-list-bad
+    method: GET
+    path: /api/v1/shoes?actionTaken=nope,none&condition=x&limit=0&foo=1
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: shoes-list-filter
+    method: GET
+    path: /api/v1/shoes?actionTaken=none&recommendedAction=resell,repair,donate,recycle&limit=1
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: shoes-summary
+    smoke: true
+    method: GET
+    path: /api/v1/shoes/summary
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: shoes-profile
+    method: GET
+    path: /api/v1/shoes/${myshoe}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: shoes-profile-unknown
+    method: GET
+    path: /api/v1/shoes/00000000-0000-4000-8000-000000000000
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 404
+  - name: shoes-patch-empty
+    method: PATCH
+    path: /api/v1/shoes/${myshoe}
+    headers: { Authorization: "Bearer ${access}" }
+    json: {}
+    expect_status: 400
+  - name: shoes-patch-bad
+    method: PATCH
+    path: /api/v1/shoes/${myshoe}
+    headers: { Authorization: "Bearer ${access}" }
+    json: { brandId: "x", sizeId: "y", gender: "z", actionTaken: "w", model: 5, color: null, primaryPhotoId: null, shoeTypeId: "q", foo: 1 }
+    expect_status: 400
+  - name: shoes-patch-ok
+    method: PATCH
+    path: /api/v1/shoes/${myshoe}
+    headers: { Authorization: "Bearer ${access}" }
+    json: { model: "  Air Max 95 ", actionTaken: "resold", color: null }
+    expect_status: 200
+  - name: shoes-share-create
+    method: POST
+    path: /api/v1/shoes/${myshoe}/share
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+    save: { sharetoken: data.token }
+    ignore: [data.url, data.token]
+  - name: shoes-share-again
+    method: POST
+    path: /api/v1/shoes/${myshoe}/share
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+    ignore: [data.url, data.token]
+  - name: share-public-json
+    method: GET
+    path: /api/v1/s/${sharetoken}
+    headers: { Accept: "application/json" }
+    expect_status: 200
+    ignore: [data.photoUrl]
+  - name: share-public-html
+    method: GET
+    path: /api/v1/s/${sharetoken}
+    headers: { Accept: "text/html" }
+    expect_status: 200
+    ignore_body: true
+  - name: share-public-404-json
+    method: GET
+    path: /api/v1/s/nope-token-xyz
+    headers: { Accept: "application/json" }
+    expect_status: 404
+  - name: share-public-404-html
+    method: GET
+    path: /api/v1/s/nope-token-xyz
+    expect_status: 404
+  - name: shoes-share-revoke
+    method: DELETE
+    path: /api/v1/shoes/${myshoe}/share
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 204
+  - name: share-public-after-revoke
+    method: GET
+    path: /api/v1/s/${sharetoken}
+    headers: { Accept: "application/json" }
+    expect_status: 404
+    ignore: [path]   # the token is random per target
+  - name: shoes-feedback-bad
+    method: POST
+    path: /api/v1/shoes/${myshoe}/condition-feedback
+    headers: { Authorization: "Bearer ${access}" }
+    json: { suggestedConditionCode: "C9", reason: "  " }
+    expect_status: 400
+  - name: shoes-feedback-ok
+    method: POST
+    path: /api/v1/shoes/${myshoe}/condition-feedback
+    headers: { Authorization: "Bearer ${access}" }
+    json: { suggestedConditionCode: "C3", reason: "  sole worn  " }
+    expect_status: 201
+  - name: shoes-photo-no-file
+    method: POST
+    path: /api/v1/shoes/${myshoe}/photos
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 400
+  - name: shoes-photo-add
+    method: POST
+    path: /api/v1/shoes/${myshoe}/photos
+    headers: { Authorization: "Bearer ${access}" }
+    multipart: { files: [["file", "b.png"]] }
+    expect_status: 201
+    save: { scanphoto: data.photos.0.id, uploadphoto: data.photos.4.id }
+  - name: shoes-photo-delete-scan-fixed
+    method: DELETE
+    path: /api/v1/shoes/${myshoe}/photos/${scanphoto}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 409
+  - name: shoes-photo-delete-upload
+    method: DELETE
+    path: /api/v1/shoes/${myshoe}/photos/${uploadphoto}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: shoes-photo-delete-again
+    method: DELETE
+    path: /api/v1/shoes/${myshoe}/photos/${uploadphoto}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 404
+  - name: shoes-rescan
+    method: POST
+    path: /api/v1/shoes/${myshoe}/rescan
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 201
+  - name: shoes-rescan-again
+    method: POST
+    path: /api/v1/shoes/${myshoe}/rescan
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: shoes-profile-after
+    method: GET
+    path: /api/v1/shoes/${myshoe}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 200
+  - name: shoes-remove
+    method: DELETE
+    path: /api/v1/shoes/${myshoe}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 204
+  - name: shoes-profile-gone
+    method: GET
+    path: /api/v1/shoes/${myshoe}
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 404
+  - name: admin-integrations-forbidden
+    smoke: true
+    method: GET
+    path: /api/v1/admin/integrations
+    headers: { Authorization: "Bearer ${access}" }
+    expect_status: 403

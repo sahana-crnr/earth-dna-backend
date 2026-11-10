@@ -1,291 +1,170 @@
-# 🌍 Earth DNA — Backend API
+# Earth DNA — Backend API
 
-REST API backend for the Earth DNA platform.
+REST API for the Earth DNA app: accounts and sign-in, shoe scan sessions and
+photo upload, identification results and review, the catalog, and the user's
+shoe collection with public share pages.
 
-**Stack:** NestJS 11 · TypeORM · PostgreSQL 17 · TypeScript 5 · JWT Auth · Swagger/OpenAPI
+**Stack:** Python 3.12 · FastAPI · SQLAlchemy 2 (async) + Alembic · PostgreSQL 16 ·
+JWT · AWS (S3, SES, Secrets Manager) · uv · ruff · mypy · pytest + Hypothesis
+
+All routes live under `/api/v1`; interactive OpenAPI docs are served at `/docs`.
+Feature guides (behaviour, rules, every endpoint with its error codes) are in
+[`.claude/docs/`](.claude/docs/README.md).
 
 ---
 
-## 📋 Prerequisites
+## Prerequisites
 
-Make sure the following are installed on your machine before you start:
-
-| Tool | Version | Install |
+| Tool | Version | Notes |
 |---|---|---|
-| Node.js | ≥ 20 | [nodejs.org](https://nodejs.org) |
-| npm | ≥ 10 | Bundled with Node.js |
-| Docker | Latest | [docker.com](https://www.docker.com/products/docker-desktop) |
-| Docker Compose | Latest | Bundled with Docker Desktop |
+| Python | 3.12 | `.python-version` |
+| [uv](https://docs.astral.sh/uv/) | ≥ 0.5 | dependency manager, replaces pip/venv |
+| Docker | latest | local PostgreSQL (and S3 emulator) |
 
----
-
-## 🚀 Getting Started
-
-### 1. Clone the repository
+## Getting started
 
 ```bash
-git clone https://github.com/<your-username>/earth-dna-BE.git
-cd earth-dna-BE
+git clone <repo-url> earth-dna-B.E && cd earth-dna-B.E
+uv sync --all-groups                 # creates .venv with runtime + dev dependencies
+cp .env.example .env                 # fill JWT_SECRET (>= 32 chars) and the DB_* values
 ```
 
-### 2. Install dependencies
+Local PostgreSQL and S3 emulator come from the `local-infra` folder next to
+this repository (`docker compose up -d postgres s3`, Postgres on `5433`,
+S3 emulator on `4567`). `docker compose up --build` in this folder is an
+alternative that runs the backend image itself next to a throwaway Postgres.
 
 ```bash
-npm install
+uv run python -m tools.migrate       # creates the schema (or stamps an existing one)
+uv run uvicorn app.main:app --port 1234 --reload
 ```
 
-### 3. Set up environment variables
-
-Copy the example file and fill in your values:
-
-```bash
-cp .env.example .env
+```
+GET http://localhost:1234/api/v1  →  {"statusCode":200,"message":"Success","data":"Welcome to the Earth DNA API!", ...}
+Docs: http://localhost:1234/docs
 ```
 
-Open `.env` and update the values — at minimum set a strong `JWT_SECRET`:
+### Authenticating in the docs UI
 
-```env
-# Application
-NODE_ENV=development
-PORT=3000
-API_PREFIX=api/v1
+1. `POST /auth/register` or `POST /auth/login` returns `accessToken`.
+2. Click **Authorize**, paste the token (without `Bearer `), confirm.
+3. Protected routes (for example `GET /auth/profile`) now send the token.
 
-# Database (matches docker-compose.yml defaults)
-DB_HOST=localhost
-DB_PORT=5433
-DB_USERNAME=postgres
-DB_PASSWORD=postgres
-DB_NAME=earth_dna
+## Configuration — one source
 
-# TypeORM — set true only for local dev, never in production
-DB_SYNC=true
-DB_LOGGING=true
+`app/core/settings.py` is the only list of configuration keys; `.env.example`
+is generated from it (`uv run python -m tools.gen_env_example`). Precedence:
 
-# JWT
-JWT_SECRET=your-super-secret-key-change-this
-JWT_EXPIRES_IN=7d
-```
+1. process environment
+2. `APP_CONFIG` — one JSON object holding the whole environment's secret
+3. `.env`
+4. the default declared in `Settings`
 
-> ⚠️ **Never commit your `.env` file.** It is already in `.gitignore`.
+`APP_ENV` is `local | dev | stage | prod`. The service refuses to boot when
+`JWT_SECRET` is missing, too short, or the placeholder.
 
----
+Deployed environments never carry per-key variables: the ECS task definition
+injects exactly `APP_ENV`, `PORT` and `APP_CONFIG` (the Secrets Manager secret
+`earthdna/be/app-env-<region>-<env>`). To add a key: declare it in `Settings`,
+regenerate `.env.example`, add the value to the environment's secret.
 
-## 🐘 PostgreSQL with Docker
+AWS access in deployed environments comes from the **ECS task role**; static
+keys in the secret are ignored outside `APP_ENV=local`. Locally use
+`AWS_PROFILE` (or a key pair) in `.env`.
 
-The project uses Docker to run PostgreSQL 17 locally on **port 5433** (avoids conflicts with any locally installed Postgres on the default 5432).
+## Response contract
 
-### Start the database
-
-```bash
-npm run db:start
-```
-
-This runs `docker compose up -d` in the background. The first run will pull the `postgres:17-alpine` image (~90 MB).
-
-### Verify it's running
-
-```bash
-docker ps
-# You should see: earth_dna_postgres   postgres:17-alpine   Up
-```
-
-### Other database commands
-
-```bash
-npm run db:stop    # Stop the container (data is preserved)
-npm run db:reset   # ⚠️  Stop + delete all data + restart fresh
-```
-
-> **How it works:** Docker Compose mounts a named volume (`postgres_data`) so your data persists across `db:stop` / `db:start` cycles. Only `db:reset` wipes the data.
-
----
-
-## ▶️ Running the App
-
-Make sure the database is running first (`npm run db:start`), then:
-
-```bash
-# Development — watch mode (auto-restarts on file changes)
-npm run start:dev
-
-# Production build + run
-npm run build
-npm run start:prod
-```
-
-Once started you'll see:
-
-```
-🚀 Application running on: http://localhost:3000/api/v1
-📖 Swagger docs:          http://localhost:3000/docs
-```
-
----
-
-## 📖 API Documentation (Swagger)
-
-Interactive API docs are available at:
-
-```
-http://localhost:3000/docs
-```
-
-### Authenticating in Swagger
-
-1. Use `POST /auth/register` or `POST /auth/login` to get an `accessToken`
-2. Click the **Authorize 🔒** button at the top right
-3. Paste your token (without the `Bearer ` prefix — Swagger adds it automatically)
-4. Click **Authorize** → **Close**
-5. Protected endpoints (e.g. `GET /auth/profile`) will now include the token automatically
-
----
-
-## 🔌 API Endpoints
-
-All routes are prefixed with `/api/v1`.
-
-### Auth
-
-| Method | Route | Auth | Description |
-|---|---|---|---|
-| `POST` | `/auth/register` | Public | Create a new account |
-| `POST` | `/auth/login` | Public | Sign in, receive JWT |
-| `POST` | `/auth/forgot-password` | Public | Request password reset email (rate-limited) |
-| `POST` | `/auth/reset-password` | Public | Set new password using email token |
-| `GET` | `/auth/profile` | 🔒 JWT | Get logged-in user details |
-
-### Request body — Register
+Success:
 
 ```json
-{
-  "fullName": "Jane Doe",
-  "email": "jane@example.com",
-  "password": "Password123",
-  "country": "USA",
-  "zipCode": "10001"
-}
+{ "statusCode": 200, "message": "Success", "data": { ... }, "timestamp": "2026-11-10T10:00:00.000Z" }
 ```
 
-> `zipCode` is optional. All other fields are required.
-
-### Request body — Login
+Error:
 
 ```json
-{
-  "email": "jane@example.com",
-  "password": "Password123"
-}
+{ "statusCode": 400, "timestamp": "...", "path": "/api/v1/...", "message": ["..."], "code": "OPTIONAL_CODE", "details": {} }
 ```
 
-### Password reset (AWS SES)
+## Database migrations
 
-1. Set `FRONTEND_URL` to your web app (not the API URL).
-2. Set `MAIL_DRY_RUN=false` and configure `AWS_SES_FROM_EMAIL`, `AWS_REGION`, and AWS credentials.
-3. In **SES sandbox**, verify both sender and recipient emails (same address is fine for testing).
-4. Run `npm run verify:ses` (requires [AWS CLI](https://aws.amazon.com/cli/)) or follow [docs/AWS_SES_SETUP.md](docs/AWS_SES_SETUP.md).
-
-Email link format: `{FRONTEND_URL}/reset-password?token=...` — your frontend should POST the token and new password to `/auth/reset-password`.
-
-### Response envelope
-
-Every response is wrapped in a standard envelope:
-
-```json
-{
-  "statusCode": 200,
-  "message": "Success",
-  "data": { ... },
-  "timestamp": "2026-05-26T10:00:00.000Z"
-}
-```
-
----
-
-## 🗄️ Database Migrations
-
-> `DB_SYNC=true` in `.env` auto-syncs the schema locally — no migrations needed for development.
-> In staging/production set `DB_SYNC=false` and use migrations.
+Alembic, with `0001_node_schema` as the baseline. `tools.migrate` runs before
+the app in the container and does the right thing on any database state:
+fresh → create; Alembic history present → upgrade; schema built by the previous
+service (its migration ledger complete) → stamp the baseline; schema present
+without either ledger → refuse and stop.
 
 ```bash
-# Generate a migration after changing an entity
-npm run migration:generate -- src/database/migrations/MigrationName
-
-# Apply all pending migrations
-npm run migration:run
-
-# Roll back the last migration
-npm run migration:revert
-
-# List all migrations and their status
-npm run migration:show
+uv run python -m tools.migrate                       # apply
+uv run alembic check                                 # models vs database drift (CI gate)
+uv run alembic revision --autogenerate -m "add_x"    # new migration after a model change
 ```
 
----
+## Catalog seed
 
-## 🧪 Tests
+Loads brands, categories, models, colours and sizes from the product database
+(read only, `CATALOG_SOURCE_DB_*` in `.env`) into this backend's `catalog_*`
+tables. Re-runnable; rows missing from the source are deactivated, never
+deleted.
 
 ```bash
-# Unit tests
-npm run test
-
-# Unit tests in watch mode
-npm run test:watch
-
-# Test coverage report
-npm run test:cov
-
-# End-to-end tests
-npm run test:e2e
+uv run python -m tools.catalog_seed --dry   # read and plan only
+uv run python -m tools.catalog_seed         # write
 ```
 
----
+## Quality gates
 
-## 📁 Project Structure
-
-```
-src/
-├── config/                  # App and database config (registerAs)
-├── common/
-│   ├── filters/             # Global exception filter
-│   ├── interceptors/        # Global response envelope interceptor
-│   └── decorators/          # @CurrentUser() param decorator
-├── database/
-│   ├── data-source.ts       # TypeORM CLI DataSource (migrations)
-│   └── migrations/          # Generated migration files
-├── auth/
-│   ├── dto/                 # RegisterDto, LoginDto, AuthResponseDto
-│   ├── guards/              # JwtAuthGuard
-│   ├── interfaces/          # AuthResponse type
-│   └── auth.module.ts / controller / service
-├── user/
-│   ├── dto/                 # CreateUserDto
-│   ├── entities/            # UserEntity
-│   └── user.module.ts / controller / service
-├── app.module.ts            # Root module
-└── main.ts                  # Bootstrap (Swagger, pipes, guards, filters)
+```bash
+uv run ruff check . && uv run ruff format --check .
+uv run mypy app tools
+uv run pytest                      # PY_IT_DB=1 also runs the database tests (needs Postgres)
+uv run pre-commit install          # ruff + mypy on every commit
 ```
 
----
+`tools/parity/` holds the request suite that proved the service against the
+previous implementation (151 cases). Its `--single` mode is the post-deploy
+smoke: `uv run python -m tools.parity.run --single --base <url>`.
 
-## 📦 Environment Variables Reference
+## CI/CD (GitHub Actions)
 
-| Variable | Default | Description |
+| Workflow | Trigger | What it does |
 |---|---|---|
-| `NODE_ENV` | `development` | Environment (`development` / `production`) |
-| `PORT` | `3000` | HTTP port the app listens on |
-| `API_PREFIX` | `api/v1` | Global URL prefix for all routes |
-| `DB_HOST` | `localhost` | PostgreSQL host |
-| `DB_PORT` | `5433` | PostgreSQL port (5433 for Docker) |
-| `DB_USERNAME` | `postgres` | PostgreSQL username |
-| `DB_PASSWORD` | `postgres` | PostgreSQL password |
-| `DB_NAME` | `earth_dna` | PostgreSQL database name |
-| `DB_SYNC` | `false` | Auto-sync schema — `true` for dev only |
-| `DB_LOGGING` | `false` | Log SQL queries to console |
-| `JWT_SECRET` | — | **Required.** Secret key for signing JWTs |
-| `JWT_EXPIRES_IN` | `7d` | JWT expiry (`7d`, `24h`, `3600`, etc.) |
+| `dev-check.yml` | pull request to `develop` | ruff, mypy, pytest with Postgres, migration + drift check, pip-audit, Docker build |
+| `deploy-dev.yml` | push to `develop`, manual | runs the same checks, builds and pushes the image to ECR (`<sha>`, `latest`, `dev-current`), registers a task definition revision (`APP_ENV`, `PORT`, `APP_CONFIG`), rolls the ECS service, waits for stability, health check, smoke run |
+| `rollback-dev.yml` | manual | points the service at an earlier task definition revision (empty input = previous) |
 
----
+AWS access from GitHub uses OIDC (`AWS_ROLE_ARN` in the `dev` environment);
+`BACKEND_URL` and `AWS_REGION` are environment variables there.
 
-## 📜 License
+## Container
+
+`Dockerfile`: `python:3.12-slim`, uv, non-root user, port 1234, `wget` for the
+ECS health check (`wget -qO- http://localhost:1234/api/v1`), and
+`python -m tools.migrate && uvicorn ...` so a failed migration stops the
+container instead of serving a broken schema.
+
+## Project structure
+
+```
+app/
+  main.py            app factory (prefix, CORS, handlers, routers, lifespan)
+  core/              settings, envelope, errors, validation, rate limit, security, db, logging
+  api/               routers: health, auth, catalog, scans, results, shoes (+ public /s), integrations
+  models/            SQLAlchemy models (column names match the database, camelCase)
+  repositories/      query helpers
+  schemas/           request validation specs
+  services/          business logic, one module per area, *_rules.py for pure rules
+  templates/         reset-password form
+alembic/             migrations (0001 = baseline schema)
+tools/
+  migrate.py         stamp-or-upgrade, runs before the app
+  catalog_seed.py    catalog import from the product database
+  gen_env_example.py writes .env.example from settings.py
+  parity/            request suite + smoke runner
+tests/               pytest + Hypothesis; tests/db needs PY_IT_DB=1
+.claude/docs/        feature guides (F1–F7) and the backend guide
+```
+
+## License
 
 Private — All rights reserved.

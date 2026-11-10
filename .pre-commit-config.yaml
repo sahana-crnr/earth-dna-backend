@@ -1,0 +1,17 @@
+# Python hooks (replace husky + lint-staged in U6). Install once:
+#   uv run pre-commit install
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (app, tools)
+        entry: uv run mypy app tools
+        language: system
+        pass_filenames: false
+        files: ^(app|tools)/.*\.py$

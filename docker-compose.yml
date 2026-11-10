@@ -1,6 +1,11 @@
+# Local run of the backend image next to a throwaway Postgres.
+#   docker compose up --build
+# For day-to-day development use `uv run uvicorn` against the Postgres in
+# ../local-infra instead (README).
 services:
   app:
-    image: earth-dna-be:latest
+    build: .
+    image: earth-dna-be:local
     container_name: earth_dna_app
     depends_on:
       postgres:
@@ -8,21 +13,19 @@ services:
     ports:
       - '1234:1234'
     environment:
-      NODE_ENV: production
+      APP_ENV: local
       PORT: 1234
-      API_PREFIX: api/v1
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USERNAME: ${DB_USERNAME:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_NAME: ${DB_NAME:-earth_dna}
-      DB_SYNC: 'true'
-      DB_LOGGING: 'false'
-      JWT_SECRET: ${JWT_SECRET:-local-test-secret}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
+      DB_SSL: 'false'
+      JWT_SECRET: ${JWT_SECRET:-local-compose-secret-change-me-0123456789}
+      MAIL_DRY_RUN: 'true'
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:16-alpine
     container_name: earth_dna_postgres
     restart: unless-stopped
     environment:
@@ -34,11 +37,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test:
-        [
-          'CMD-SHELL',
-          'pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_NAME:-earth_dna}',
-        ]
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_NAME:-earth_dna}']
       interval: 10s
       timeout: 5s
       retries: 5

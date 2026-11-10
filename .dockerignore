@@ -1,7 +1,18 @@
-node_modules
-dist
-.env*
-coverage
-*.log
 .git
+.github
+.env*
+*.log
 docs
+
+# Python
+.venv
+__pycache__
+*.pyc
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.hypothesis
+tests
+tools/parity
+tools/catalog_seed.py
+tools/gen_env_example.py
