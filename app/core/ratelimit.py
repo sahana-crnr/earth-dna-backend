@@ -155,10 +155,19 @@ class ThrottledRoute(APIRoute):
                     "ThrottlerException: Too Many Requests",
                     headers={"Retry-After": str(verdict.retry_after_seconds)},
                 )
-            response = await original(request)
-            response.headers["X-RateLimit-Limit"] = str(verdict.limit)
-            response.headers["X-RateLimit-Remaining"] = str(verdict.remaining)
-            response.headers["X-RateLimit-Reset"] = str(verdict.reset_seconds)
+            stamp = {
+                "X-RateLimit-Limit": str(verdict.limit),
+                "X-RateLimit-Remaining": str(verdict.remaining),
+                "X-RateLimit-Reset": str(verdict.reset_seconds),
+            }
+            try:
+                response = await original(request)
+            except ApiError as exc:
+                # Nest's guard wrote the headers before the handler ran, so an
+                # error answer (401, 404, 409 ...) carried them as well.
+                exc.headers = {**(exc.headers or {}), **stamp}
+                raise
+            response.headers.update(stamp)
             return response
 
         return handler

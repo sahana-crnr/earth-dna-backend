@@ -68,3 +68,28 @@ def test_rate_limiter_evicts_idle_entries() -> None:
     now[0] += 120  # past the window and past the sweep interval
     rl.hit("fresh", 10, 1000)
     assert len(rl._entries) == 1
+
+
+def test_rate_limit_headers_on_error_responses() -> None:
+    """Nest's guard stamped X-RateLimit-* before the handler, so a 401 carried them."""
+    from fastapi import APIRouter
+
+    from app.core.envelope import EnvelopedJSONResponse
+    from app.core.ratelimit import ThrottledRoute, limiter
+
+    app = FastAPI(default_response_class=EnvelopedJSONResponse)
+    app.state.settings = make_settings(THROTTLE_LIMIT=5)
+    install_exception_handlers(app)
+    r = APIRouter(route_class=ThrottledRoute)
+
+    @r.get("/boom")
+    async def boom() -> None:
+        raise ApiError(401, None, "nope")
+
+    app.include_router(r)
+    limiter.clear()
+    res = TestClient(app).get("/boom")
+    assert res.status_code == 401
+    assert res.headers["x-ratelimit-limit"] == "5"
+    assert res.headers["x-ratelimit-remaining"] == "4"
+    assert "x-ratelimit-reset" in res.headers
