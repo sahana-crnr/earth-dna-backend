@@ -295,3 +295,18 @@ async def match_product(
 
 def product_summary(p: CatalogProduct) -> dict[str, Any]:
     return {"id": str(p.id), "sku": p.sku, "msrp": p.msrp}
+
+
+async def preview_products(
+    session: AsyncSession, limit: int = 10
+) -> list[tuple[CatalogProduct, str]]:
+    stmt = (
+        select(CatalogProduct, CatalogBrand.name)
+        .join(CatalogBrand, CatalogProduct.brand_id == CatalogBrand.id)
+        .where(CatalogProduct.is_active.is_(True))
+        .order_by(CatalogProduct.imported_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return [(row[0], row[1]) for row in result.all()]
+

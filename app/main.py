@@ -214,6 +214,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router, prefix=prefix)
     app.include_router(auth.router, prefix=prefix)
     app.include_router(catalog.router, prefix=prefix)
+    app.include_router(catalog.public_router, prefix=prefix)
     app.include_router(scans.router, prefix=prefix)
     app.include_router(results.router, prefix=prefix)
     app.include_router(shoes.router, prefix=prefix)

@@ -94,3 +94,25 @@ class CatalogService:
 
     def options(self) -> dict[str, Any]:
         return {"genders": list(GENDERS)}
+
+    async def list_products(
+        self, session: AsyncSession, limit: int = 10
+    ) -> dict[str, Any]:
+        rows = await repo.preview_products(session, limit)
+        items = []
+        for prod, brand_name in rows:
+            display_title = (
+                f"{brand_name} · {prod.model or prod.title or 'Sneaker'}"
+            ).strip()
+            price_str = f"${int(prod.msrp)}" if prod.msrp else "$35"
+            items.append(
+                {
+                    "id": str(prod.id),
+                    "brand": brand_name,
+                    "model": prod.model,
+                    "title": display_title,
+                    "price": price_str,
+                    "colour": prod.colour,
+                }
+            )
+        return {"items": items}

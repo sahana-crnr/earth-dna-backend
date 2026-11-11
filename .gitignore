@@ -42,3 +42,6 @@ CLAUDE.md
 
 # parity fixture generated at run time (1 MiB)
 tools/parity/fixtures/big.jpg
+node_modules/
+dist/
+scripts/*.js

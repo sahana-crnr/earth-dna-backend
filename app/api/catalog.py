@@ -62,6 +62,25 @@ router = APIRouter(
     dependencies=[Depends(get_current_user), Depends(cache_control)],
 )
 
+public_router = APIRouter(
+    prefix="/catalog",
+    tags=["Catalog"],
+    route_class=ThrottledRoute,
+    dependencies=[Depends(cache_control)],
+)
+
+
+@public_router.get(
+    "/preview", summary="Public marketplace / catalog preview for dashboard"
+)
+@throttle(120, 60000)
+async def catalog_preview(
+    session: AsyncSession = Depends(get_session),
+    svc: CatalogService = Depends(catalog_service),
+) -> dict[str, Any]:
+    return await svc.list_products(session)
+
+
 
 @router.get("/brands", summary="E14 — active brands, A→Z, optional prefix search")
 @throttle(120, 60000)
