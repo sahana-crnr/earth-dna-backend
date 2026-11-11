@@ -22,7 +22,7 @@ The backend behind one My Shoes entry (Figma section 4: Shoe Profile, Edit shoe 
 | `shoes` | + shoeTypeId, shoeType, primaryPhotoId (FK `shoe_photos`); − primaryPhotoS3Key, − co2eKg | Existing entries were backfilled by the migration |
 | `shoe_shares` | id, shoeId, token (unique), expiresAt (unused), revokedAt, viewCount, createdAt | One active link per shoe |
 | `catalog_shoe_types` | id, slug, name, sortOrder, isActive | Six fixed rows: Athletic Shoes, Casual Shoes, Dress Shoes, Boots, Sandals, Slippers |
-| `catalog_categories` | + shoeTypeId | Filled by `npm run catalog:seed` from keyword rules |
+| `catalog_categories` | + shoeTypeId | Filled by `uv run python -m tools.catalog_seed` from keyword rules |
 | `scans` | + hiddenAt | Set when every shoe of the session is reviewed and no live entry points at it (recomputed on remove / rescan); hidden from `GET /scans` lists |
 | `shoe_feedback.type` | + `condition_suggested`, `rescanned` | Append-only |
 | `condition_mappings` | four grades: C1 A+ Like New · C2 A Lightly Worn · C3 / C4 B Heavily Worn · C5 C Not wearable | Labels are data (T18) |

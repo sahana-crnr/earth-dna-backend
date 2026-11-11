@@ -1,46 +1,90 @@
 name: CI
 
+# Quality gates for the Python (FastAPI) backend. Runs on every pull request
+# to `develop`, and is reused as the `check` job of `deploy-dev.yml` so that
+# nothing is deployed that did not pass the same gates.
 on:
   pull_request:
     branches: [develop]
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.5.11"
 
 jobs:
-  lint-format-typecheck:
-    name: Lint, Format & Type Check
+  lint-type:
+    name: Ruff, mypy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: astral-sh/setup-uv@v5
         with:
-          node-version: 20
-          cache: npm
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked --all-groups
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy app tools
+      - name: .env.example matches settings.py
+        run: uv run python -m tools.gen_env_example --check
 
-      - name: Install dependencies
-        run: npm ci
+  test:
+    name: pytest (with Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: earthdna
+          POSTGRES_PASSWORD: earthdna
+          POSTGRES_DB: earth_dna_py
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U earthdna -d earth_dna_py"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      JWT_SECRET: ci-only-secret-0123456789abcdef0123456789abcdef
+      DB_HOST: localhost
+      DB_PORT: "5433"
+      DB_USERNAME: earthdna
+      DB_PASSWORD: earthdna
+      DB_NAME: earth_dna_py
+      DB_LOGGING: "false"
+      PY_IT_DB: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked --all-groups
+      - name: Migrate a fresh database (baseline must apply cleanly)
+        run: uv run python -m tools.migrate
+      - name: Schema drift check (models vs database)
+        run: uv run alembic check
+      - run: uv run pytest
 
-      - name: Linting check
-        run: npm run lint:check
-
-      - name: Formatting check
-        run: npx prettier --check "src/**/*.ts" "test/**/*.ts"
-
-      - name: Type check
-        run: npx tsc --noEmit
-
-  build:
-    name: Build
+  audit:
+    name: Dependency audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: astral-sh/setup-uv@v5
         with:
-          node-version: 20
-          cache: npm
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --locked --all-groups
+      - run: uv export --frozen --no-emit-project --no-hashes --all-groups -o requirements-audit.txt
+      # --no-deps: the export is fully pinned, so no resolution venv is needed
+      # (pip-audit would otherwise build one with ensurepip, which uv-managed
+      # Pythons on the runner do not ship)
+      - run: uv run pip-audit -r requirements-audit.txt --no-deps --disable-pip --strict --progress-spinner off
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
+  image:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --platform linux/amd64 -t earth-dna-be:ci .

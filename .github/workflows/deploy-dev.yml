@@ -1,5 +1,13 @@
 name: Deploy to ECS (dev2)
 
+# Push to `develop` (or a manual run): run every CI gate, then build the image,
+# push it to ECR, register a task definition revision and roll the service.
+# Ends with a smoke run against the live URL. A failed gate deploys nothing.
+#
+# Task definition contract (the single configuration source):
+#   environment: APP_ENV=dev, PORT=1234
+#   secrets:     APP_CONFIG <- the whole `earthdna/be/app-env-<region>-<env>` JSON
+# Rollback: `rollback-dev.yml` (points the service at an earlier revision).
 on:
   push:
     branches: [develop]
@@ -8,11 +16,24 @@ on:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   EARTH_DNA_ENV: dev2
+  APP_ENV: dev
+  UV_VERSION: "0.5.11"
 
 jobs:
+  check:
+    name: Checks
+    uses: ./.github/workflows/dev-check.yml
+
   deploy:
+    name: Build, deploy, smoke
+    needs: check
+    # a manual run from any other branch stops here: only develop reaches dev2
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     environment: dev
+    concurrency:
+      group: deploy-dev2
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
@@ -21,15 +42,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Derive region code
-        id: region
+      - name: Derive resource names
+        id: names
         run: |
           # Matches CDK regionCode(): us-east-1 -> ue1, eu-west-1 -> ew1
           IFS='-' read -ra PARTS <<< "${{ env.AWS_REGION }}"
           RC=""
           for ((i=0; i<${#PARTS[@]}-1; i++)); do RC+="${PARTS[i]:0:1}"; done
           RC+="${PARTS[-1]}"
-          echo "code=$RC" >> "$GITHUB_OUTPUT"
+          SUFFIX="${RC}-${{ env.EARTH_DNA_ENV }}"
+          {
+            echo "suffix=$SUFFIX"
+            echo "cluster=earth-dna-cluster-$SUFFIX"
+            echo "service=earth-dna-be-service-$SUFFIX"
+            echo "repo=earth-dna-be-$SUFFIX"
+            echo "secret=earthdna/be/app-env-$SUFFIX"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -45,58 +73,104 @@ jobs:
         id: build
         env:
           REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          REPO: earth-dna-be-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
+          REPO: ${{ steps.names.outputs.repo }}
         run: |
           IMAGE_URI="$REGISTRY/$REPO"
           docker build --platform linux/amd64 \
             -t "$IMAGE_URI:${{ github.sha }}" \
             -t "$IMAGE_URI:latest" \
+            -t "$IMAGE_URI:dev-current" \
             .
           docker push "$IMAGE_URI:${{ github.sha }}"
           docker push "$IMAGE_URI:latest"
+          docker push "$IMAGE_URI:dev-current"
           echo "image=$IMAGE_URI:${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Download current task definition
         env:
-          CLUSTER: earth-dna-cluster-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
-          SERVICE: earth-dna-be-service-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
+          CLUSTER: ${{ steps.names.outputs.cluster }}
+          SERVICE: ${{ steps.names.outputs.service }}
         run: |
           TASK_DEF=$(aws ecs describe-services \
             --cluster "$CLUSTER" --services "$SERVICE" \
             --query 'services[0].taskDefinition' --output text)
+          echo "previous task definition: $TASK_DEF"
           aws ecs describe-task-definition \
             --task-definition "$TASK_DEF" \
             --query 'taskDefinition' > task-definition.json
 
-      - name: Render new task definition with updated image
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: web
-          image: ${{ steps.build.outputs.image }}
-          environment-variables: |
-            BACKEND_URL=${{ vars.BACKEND_URL }}
-            JWT_EXPIRES_IN=${{ vars.JWT_EXPIRES_IN || '24h' }}
-            REFRESH_TOKEN_EXPIRES_IN=${{ vars.REFRESH_TOKEN_EXPIRES_IN || '30d' }}
-
-      - name: Remove placeholder command override
+      - name: Render task definition (image, APP_ENV, APP_CONFIG)
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          SECRET_NAME: ${{ steps.names.outputs.secret }}
         run: |
           python3 - <<'PY'
-          import json
-          with open("${{ steps.task-def.outputs.task-definition }}") as f:
+          import json, os, re
+
+          with open("task-definition.json") as f:
               td = json.load(f)
-          for c in td.get("containerDefinitions", []):
-              c.pop("command", None)
-              c.pop("entryPoint", None)
-          with open("${{ steps.task-def.outputs.task-definition }}", "w") as f:
+          # read-only fields that RegisterTaskDefinition rejects
+          for k in ("taskDefinitionArn", "revision", "status", "requiresAttributes",
+                    "compatibilities", "registeredAt", "registeredBy", "deregisteredAt"):
+              td.pop(k, None)
+
+          web = next(c for c in td["containerDefinitions"] if c["name"] == "web")
+          # The secret ARN is already referenced by the running revision
+          # (`arn:...:secret:name-XXXX:KEY::` per key, or the whole-secret ARN).
+          arn = None
+          want = os.environ["SECRET_NAME"]
+          for s in web.get("secrets", []):
+              m = re.match(r"^(arn:aws:secretsmanager:[^:]+:[^:]+:secret:([^:]+))", s["valueFrom"])
+              # `<name>-XXXXXX` is the full secret name with its random suffix
+              if m and re.fullmatch(re.escape(want) + r"-[A-Za-z0-9]{6}", m.group(2)):
+                  arn = m.group(1)
+                  break
+          if not arn:
+              raise SystemExit("could not find the app-env secret ARN in the current task definition")
+
+          web["image"] = os.environ["IMAGE"]
+          web["environment"] = [
+              {"name": "APP_ENV", "value": os.environ.get("APP_ENV", "dev")},
+              {"name": "PORT", "value": "1234"},
+          ]
+          web["secrets"] = [{"name": "APP_CONFIG", "valueFrom": arn}]
+          web.pop("command", None)
+          web.pop("entryPoint", None)
+
+          with open("task-definition.rendered.json", "w") as f:
               json.dump(td, f, indent=2)
+          print("image:", web["image"])
+          print("environment:", web["environment"])
+          print("secrets:", [s["name"] for s in web["secrets"]])
           PY
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: earth-dna-be-service-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
-          cluster: earth-dna-cluster-${{ steps.region.outputs.code }}-${{ env.EARTH_DNA_ENV }}
+          task-definition: task-definition.rendered.json
+          service: ${{ steps.names.outputs.service }}
+          cluster: ${{ steps.names.outputs.cluster }}
           wait-for-service-stability: true
+          wait-for-minutes: 15
+
+      - name: Health check
+        env:
+          BASE: ${{ vars.BACKEND_URL }}
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$BASE/api/v1" > /dev/null; then echo "healthy"; exit 0; fi
+            sleep 5
+          done
+          echo "service did not answer on $BASE/api/v1"; exit 1
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Smoke (routing, JWT, DB, S3 upload, catalog)
+        env:
+          BASE: ${{ vars.BACKEND_URL }}
+        run: |
+          uv sync --locked --all-groups
+          uv run python -m tools.parity.run --single --base "$BASE"

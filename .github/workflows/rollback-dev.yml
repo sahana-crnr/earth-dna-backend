@@ -1,0 +1,82 @@
+name: Rollback ECS (dev2)
+
+# Manual: point the dev2 service at an earlier task definition revision.
+# Every deploy registers a new revision and leaves the old ones in place, and
+# ECR keeps every image tag, so a rollback is one service update.
+#   revision = the number to go back to, e.g. 41 (the last Node revision; its
+#              image is still in ECR and the schema it needs is unchanged —
+#              Alembic only added its own `alembic_version` table).
+#   empty    = the revision before the current one.
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: "Task definition revision to roll back to (empty = previous)"
+        required: false
+        default: ""
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  EARTH_DNA_ENV: dev2
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: dev
+    concurrency:
+      group: deploy-dev2
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Derive resource names
+        id: names
+        run: |
+          IFS='-' read -ra PARTS <<< "${{ env.AWS_REGION }}"
+          RC=""
+          for ((i=0; i<${#PARTS[@]}-1; i++)); do RC+="${PARTS[i]:0:1}"; done
+          RC+="${PARTS[-1]}"
+          SUFFIX="${RC}-${{ env.EARTH_DNA_ENV }}"
+          {
+            echo "cluster=earth-dna-cluster-$SUFFIX"
+            echo "service=earth-dna-be-service-$SUFFIX"
+            echo "family=earth-dna-be-$SUFFIX"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Roll the service back
+        env:
+          CLUSTER: ${{ steps.names.outputs.cluster }}
+          SERVICE: ${{ steps.names.outputs.service }}
+          FAMILY: ${{ steps.names.outputs.family }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          CURRENT=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          CURRENT_REV="${CURRENT##*:}"
+          FAMILY="${CURRENT%:*}"; FAMILY="${FAMILY##*/}"   # from the service, not the naming rule
+          if [ -z "$REVISION" ]; then REVISION=$((CURRENT_REV - 1)); fi
+          [[ "$REVISION" =~ ^[0-9]+$ ]] || { echo "revision must be a number, got '$REVISION'"; exit 1; }
+          echo "current: $FAMILY:$CURRENT_REV  ->  target: $FAMILY:$REVISION"
+          aws ecs describe-task-definition --task-definition "$FAMILY:$REVISION" \
+            --query 'taskDefinition.containerDefinitions[0].image' --output text
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --task-definition "$FAMILY:$REVISION" --force-new-deployment > /dev/null
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+          echo "service is stable on $FAMILY:$REVISION"
+
+      - name: Health check
+        env:
+          BASE: ${{ vars.BACKEND_URL }}
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$BASE/api/v1" > /dev/null; then echo "healthy"; exit 0; fi
+            sleep 5
+          done
+          echo "service did not answer on $BASE/api/v1"; exit 1

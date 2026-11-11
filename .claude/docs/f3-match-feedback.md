@@ -71,7 +71,7 @@ Build, test locally, raise a PR, deploy to dev, test on dev with the browser tes
 | `catalog_sizes` | id, brandId (null = generic), system `US`, label, sortOrder | distinct normalised product sizes per brand |
 | `condition_mappings` | code, label, gradeLetter, description, filterGroup, sortOrder | migration (D7 labels) |
 
-Seed script `npm run catalog:seed`: reads the taxonomy (`tracker`) and `products` tables of the product database (`value-lens`, schema `keepa`, same RDS instance; connection via `CATALOG_SOURCE_DB_*`, read only) and upserts into the earthdna catalog tables by slug / sku; rows missing from the source become `isActive = false`; never deletes. Safe to re-run any time (the pull is still loading). CSV fallback `--taxonomy <csv> --products <csv>`. Column mapping lives in one place (`catalog-import.ts`). The API never queries the source database.
+Seed script `uv run python -m tools.catalog_seed` (`--dry` to plan only): reads the taxonomy (`tracker`) and `products` tables of the product database (`value-lens`, schema `keepa`, same RDS instance; connection via `CATALOG_SOURCE_DB_*`, read only) and upserts into the earthdna catalog tables by slug / sku; rows missing from the source become `isActive = false`; never deletes. Safe to re-run any time (the pull is still loading). Column mapping lives in one place (`tools/catalog_seed.py`). The API never queries the source database.
 
 Size normalisation (source sizes are raw text: `8`, `8.5`, `10 Wide`, `9-10`, `Medium`): numeric and half sizes within 1–20 become the label; `Wide` is stripped; ranges, words and multi-system strings are skipped. The raw value is kept on `catalog_products.sizeRaw`.
 
