@@ -1,0 +1,51 @@
+services:
+  - type: web
+    name: earth-dna-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m tools.migrate && exec uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: API_PREFIX
+        value: api/v1
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 24h
+      - key: REFRESH_TOKEN_EXPIRES_IN
+        value: 30d
+      - key: DB_HOST
+        fromDatabase:
+          name: earth-dna-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: earth-dna-db
+          property: port
+      - key: DB_USERNAME
+        fromDatabase:
+          name: earth-dna-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: earth-dna-db
+          property: password
+      - key: DB_NAME
+        fromDatabase:
+          name: earth-dna-db
+          property: database
+      - key: DB_SSL
+        value: "true"
+      - key: ADMIN_EMAIL
+        value: admin@earthdna.org
+      - key: ADMIN_PASSWORD
+        value: AdminSecretPassword123!
+      - key: MAIL_DRY_RUN
+        value: "true"
+
+databases:
+  - name: earth-dna-db
+    databaseName: earth_dna
+    user: earth_dna_user
+    plan: free

@@ -468,6 +468,13 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        raw_db_url = os.environ.get("DATABASE_URL")
+        if raw_db_url:
+            if raw_db_url.startswith("postgres://"):
+                return raw_db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+            if raw_db_url.startswith("postgresql://"):
+                return raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            return raw_db_url
         # URL.create escapes `@ / : #` in the password; string formatting did not.
         return URL.create(
             "postgresql+asyncpg",
