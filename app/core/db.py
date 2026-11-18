@@ -6,6 +6,7 @@ encrypt, do not verify the certificate (the RDS endpoint inside the VPC).
 
 from __future__ import annotations
 
+import os
 import ssl
 from collections.abc import AsyncIterator
 from typing import Any
@@ -23,7 +24,13 @@ from app.core.settings import Settings
 
 def make_engine(settings: Settings) -> AsyncEngine:
     connect_args: dict[str, Any] = {}
-    if settings.DB_SSL:
+    is_cloud_db = (
+        settings.DB_SSL
+        or "neon.tech" in settings.database_url
+        or "render.com" in settings.database_url
+        or "sslmode" in (os.environ.get("DATABASE_URL") or "")
+    )
+    if is_cloud_db:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE

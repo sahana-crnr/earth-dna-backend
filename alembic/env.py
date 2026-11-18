@@ -80,9 +80,16 @@ def _run_sync(connection: Connection) -> None:
 async def run_migrations_online() -> None:
     settings = get_settings()
     section = config.get_section(config.config_ini_section, {})
-    section["sqlalchemy.url"] = _url()
+    url = _url()
+    section["sqlalchemy.url"] = url
     connect_args: dict[str, object] = {}
-    if settings.DB_SSL and "ALEMBIC_DATABASE_URL" not in os.environ:
+    is_cloud_db = (
+        settings.DB_SSL
+        or "neon.tech" in url
+        or "render.com" in url
+        or "sslmode" in (os.environ.get("DATABASE_URL") or "")
+    )
+    if is_cloud_db and "ALEMBIC_DATABASE_URL" not in os.environ:
         import ssl
 
         ctx = ssl.create_default_context()

@@ -471,9 +471,13 @@ class Settings(BaseSettings):
         raw_db_url = os.environ.get("DATABASE_URL")
         if raw_db_url:
             if raw_db_url.startswith("postgres://"):
-                return raw_db_url.replace("postgres://", "postgresql+asyncpg://", 1)
-            if raw_db_url.startswith("postgresql://"):
-                return raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+                raw_db_url = raw_db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+            elif raw_db_url.startswith("postgresql://"):
+                raw_db_url = raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            # asyncpg dialect fails if 'sslmode' query param is passed
+            raw_db_url = re.sub(r'[\?&]sslmode=[^&]*', '', raw_db_url)
+            if "?" not in raw_db_url and "&" in raw_db_url:
+                raw_db_url = raw_db_url.replace("&", "?", 1)
             return raw_db_url
         # URL.create escapes `@ / : #` in the password; string formatting did not.
         return URL.create(
