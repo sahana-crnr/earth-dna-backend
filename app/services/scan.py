@@ -533,17 +533,17 @@ class ScanService:
                 [
                     {
                         "brand": b.name,
-                        "model": "Runner",
-                        "confidence": round(0.95 - i * 0.08, 2),
+                        "model": "Sneaker",
+                        "confidence": 0.5,
                     }
-                    for i, b in enumerate(brands[:3])
+                    for b in brands[:3]
                 ]
                 if brands
                 else [
                     {
                         "brand": "On Running",
-                        "model": "Cloudmonster",
-                        "confidence": 0.92,
+                        "model": "Sneaker",
+                        "confidence": 0.5,
                     }
                 ]
             )
@@ -563,14 +563,12 @@ class ScanService:
                         "model_version": "catalog-v1",
                         "brand": primary_brand,
                         "sub_brand": None,
-                        "model": "Cloudmonster"
-                        if primary_brand == "On Running"
-                        else "Runner",
+                        "model": "Sneaker",
                         "colorway": "Original",
                         "category": "Athletic Shoes",
                         "subCategory": "Running Shoes",
                         "material": "Recycled Mesh",
-                        "confidence": to_numeric(0.92),
+                        "confidence": None,
                         "condition_code": "C2",
                         "candidates": candidates,
                         "raw": None,
