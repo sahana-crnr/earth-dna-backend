@@ -152,6 +152,12 @@ class MemoryPhotoStorage:
     async def signed_get_url(self, key: str, ttl_seconds: int) -> str:
         if not self.configured:
             raise StorageNotConfiguredError()
+        item = self.objects.get(key)
+        if item is not None:
+            import base64
+            body, ctype = item
+            b64 = base64.b64encode(body).decode("ascii")
+            return f"data:{ctype};base64,{b64}"
         return f"memory://{key}?ttl={ttl_seconds}"
 
 

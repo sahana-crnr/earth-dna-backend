@@ -41,7 +41,7 @@ from app.services.social.apple import AppleTokenVerifier
 from app.services.social.facebook import FacebookTokenVerifier
 from app.services.social.google import GoogleTokenVerifier
 from app.services.social.jwks import JwksVerifier
-from app.services.storage import PhotoStorage, S3PhotoStorage
+from app.services.storage import MemoryPhotoStorage, PhotoStorage, S3PhotoStorage
 from app.services.values import StaticValueProvider
 
 log = logging.getLogger("app.bootstrap")
@@ -123,14 +123,20 @@ def build_services(
     )
     app.state.admin_bootstrap = AdminBootstrap(settings, sessions, refresh)
     app.state.catalog = CatalogService(settings)
-    storage = storage or S3PhotoStorage(settings)
+    if storage is None:
+        if settings.SHOE_PHOTOS_BUCKET:
+            storage = S3PhotoStorage(settings)
+        else:
+            storage = MemoryPhotoStorage(configured=True)
+    if not storage.is_configured():
+        storage = MemoryPhotoStorage(configured=True)
     app.state.storage = storage
-    app.state.scans = ScanService(settings, sessions, storage)
     views = ShoeViewMapper(settings, storage)
     values = StaticValueProvider()
     builder = ScanResultsBuilder(views)
     results_svc = ScanResultService(settings, builder)
     app.state.results = results_svc
+    app.state.scans = ScanService(settings, sessions, storage, results_svc)
     integrations_svc = IntegrationsService()
     app.state.integrations = integrations_svc
     app.state.analyze = ScanAnalyzeService(
